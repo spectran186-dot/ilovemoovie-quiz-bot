@@ -41,7 +41,7 @@ The production entry point is `src/index.ts`. The previous Python/aiogram protot
    npx wrangler secret put WEBHOOK_SECRET
    ```
    Use the BotFather token for `BOT_TOKEN`. For `WEBHOOK_SECRET`, use a long random string containing only letters, digits, underscores, or hyphens; keep it private.
-8. Set the Telegram webhook. Replace the two placeholders with the deployed Worker URL and the exact `WEBHOOK_SECRET` value:
+8. Set the Telegram webhook. Replace the placeholders with the deployed Worker URL, bot token, and exact `WEBHOOK_SECRET` value:
    ```bash
    curl -X POST "https://api.telegram.org/botYOUR_BOT_TOKEN/setWebhook" \
      --data-urlencode "url=https://YOUR_WORKER.workers.dev/telegram/webhook" \
