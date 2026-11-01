@@ -16,7 +16,7 @@
     {
       "binding": "DB",
       "database_name": "ilovemoovie-quiz-db",
-      "database_id": "REPLACE_WITH_D1_DATABASE_ID",
+      "database_id": "876221ca-a99e-40cf-ad95-a05370a13a6c",
       "migrations_dir": "migrations"
     }
   ]
