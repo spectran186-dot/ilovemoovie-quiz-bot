@@ -42,7 +42,7 @@ async function putDraft(env:Env,id:number,d:Draft|null){
   else await env.DB.prepare("DELETE FROM admin_drafts WHERE admin_id=?").bind(id).run();
 }
 async function saveQuiz(env:Env,id:number,d:Draft){
-  const result=await env.DB.prepare("INSERT INTO quizzes(title,status,created_at) VALUES(?,'draft',?)").bind(d.title,isoNow()).run();
+  const result=await env.DB.prepare("INSERT INTO quizzes(title,status,created_at) VALUES(?,'draft',?)").bind(d.title||"",isoNow()).run();
   const quizId=Number(result.meta.last_row_id);
   for(let i=0;i<d.questions.length;i++){
     const q=d.questions[i];
@@ -56,6 +56,7 @@ async function saveQuiz(env:Env,id:number,d:Draft){
 async function adminMessage(env:Env,m:TgMessage){
   const uid=m.from!.id, text=(m.text||"").trim(), chat=m.chat.id;
   const [cmd,...args]=text.split(/\s+/);
+  if((cmd==="/start"||cmd==="/privacy"||cmd==="/leaderboard")&&!await getDraft(env,uid)) return participantMessage(env,m);
   if(cmd==="/cancel"){await putDraft(env,uid,null);return say(env,chat,"Создание викторины отменено.");}
   if(cmd==="/newquiz"){await putDraft(env,uid,{stage:"title",questions:[]});return say(env,chat,"Создание викторины. Отправь её название.");}
   if(cmd==="/quizlist"){
@@ -182,9 +183,9 @@ export default {
       if(update.update_id!==undefined){
         const seen=await env.DB.prepare("SELECT update_id FROM processed_updates WHERE update_id=?").bind(update.update_id).first();
         if(seen)return new Response("OK");
-        await env.DB.prepare("INSERT OR IGNORE INTO processed_updates(update_id,processed_at) VALUES(?,?)").bind(update.update_id,isoNow()).run();
       }
       await handleUpdate(env,update);
+      if(update.update_id!==undefined) await env.DB.prepare("INSERT OR IGNORE INTO processed_updates(update_id,processed_at) VALUES(?,?)").bind(update.update_id,isoNow()).run();
       return new Response("OK");
     }catch(e){
       console.error("Webhook error",e);
