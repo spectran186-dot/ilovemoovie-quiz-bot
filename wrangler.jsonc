@@ -1,0 +1,23 @@
+{
+  "$schema": "node_modules/wrangler/config-schema.json",
+  "name": "ilovemoovie-quiz-bot",
+  "main": "src/index.ts",
+  "compatibility_date": "2026-11-02",
+  "observability": { "enabled": true },
+  "vars": {
+    "ADMIN_IDS": "REPLACE_WITH_TELEGRAM_USER_ID",
+    "CHANNEL_ID": "@ilovemoovie",
+    "CHANNEL_USERNAME": "ilovemoovie",
+    "BOT_USERNAME": "REPLACE_WITH_BOT_USERNAME",
+    "QUIZ_HOURS": "48",
+    "SESSION_MINUTES": "20"
+  },
+  "d1_databases": [
+    {
+      "binding": "DB",
+      "database_name": "ilovemoovie-quiz-db",
+      "database_id": "REPLACE_WITH_D1_DATABASE_ID",
+      "migrations_dir": "migrations"
+    }
+  ]
+}
