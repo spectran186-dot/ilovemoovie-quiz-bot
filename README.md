@@ -43,12 +43,12 @@ The production entry point is `src/index.ts`. The previous Python/aiogram protot
    Use the BotFather token for `BOT_TOKEN`. For `WEBHOOK_SECRET`, use a long random string containing only letters, digits, underscores, or hyphens; keep it private.
 8. Set the Telegram webhook. Replace the two placeholders with the deployed Worker URL and the exact `WEBHOOK_SECRET` value:
    ```bash
-   curl -X POST "https://api.telegram.org/bot< BOT_TOKEN >/setWebhook" \
-     -d "url=https://<WORKER_SUBDOMAIN>.workers.dev/telegram/webhook" \
-     -d "secret_token=<WEBHOOK_SECRET>" \
-     -d 'allowed_updates=["message"]'
+   curl -X POST "https://api.telegram.org/botYOUR_BOT_TOKEN/setWebhook" \
+     --data-urlencode "url=https://YOUR_WORKER.workers.dev/telegram/webhook" \
+     --data-urlencode "secret_token=YOUR_WEBHOOK_SECRET" \
+     --data-urlencode 'allowed_updates=["message"]'
    ```
-   Remove the spaces inside `< BOT_TOKEN >` when inserting your token. Telegram should return `{"ok":true,"result":true,...}`.
+   Replace the three uppercase placeholders with your actual values. Telegram should return `{"ok":true,"result":true,...}`.
 9. Check `https://<WORKER_SUBDOMAIN>.workers.dev/`. It should say `ilovemoovie quiz bot is running`.
 
 ## Worker environment variables
