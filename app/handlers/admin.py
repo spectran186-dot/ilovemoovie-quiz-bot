@@ -1,4 +1,5 @@
 from datetime import datetime, timedelta, timezone
+from html import escape
 from aiogram import Router
 from aiogram.filters import Command
 from aiogram.fsm.context import FSMContext
@@ -69,7 +70,7 @@ async def publish(message: Message):
     if not quiz or not count: return await message.answer('Черновик не найден или в нём нет вопросов.')
     if not config.channel_id or not config.channel_username: return await message.answer('Сначала настрой CHANNEL_ID и CHANNEL_USERNAME в окружении.')
     ends=datetime.now(timezone.utc)+timedelta(hours=config.quiz_hours)
-    text=f'🎬 <b>{quiz["title"]}</b>\n\nНовая кино-викторина канала @ilovemoovie!\nВнутри {count} вопросов. На каждый — три попытки. Викторина доступна 48 часов.'
+    text=f'🎬 <b>{escape(quiz["title"])}</b>\n\nНовая кино-викторина канала @ilovemoovie!\nВнутри {count} вопросов. На каждый — три попытки. Викторина доступна 48 часов.'
     sent=await message.bot.send_message(config.channel_id,text,parse_mode='HTML',reply_markup=quiz_link_keyboard(f'https://t.me/{(await message.bot.get_me()).username}?start=quiz_{qid}'))
     async with await connect() as db:
         await db.execute('UPDATE quizzes SET status="published",published_at=?,ends_at=?,channel_message_id=? WHERE id=?',(now(),ends.isoformat(),sent.message_id,qid)); await db.commit()
