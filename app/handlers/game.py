@@ -1,4 +1,5 @@
 from datetime import datetime, timedelta, timezone
+from html import escape
 from aiogram import Router
 from aiogram.types import Message
 from aiogram.filters import Command
@@ -43,7 +44,7 @@ async def send_question(message: Message, quiz_id: int):
             await db.execute('UPDATE sessions SET completed=1 WHERE id=?', (s['id'],)); await db.commit()
         return await message.answer(f'🎉 Викторина завершена! Твой результат: {s["score"]} баллов.\n/leaderboard — общий рейтинг.')
     q = qs[s['question_pos']]
-    await message.answer(f'🎬 <b>Вопрос {s["question_pos"]+1} из {len(qs)}</b>\n{q["prompt"]}\n\nУ тебя 3 попытки. Напиши название фильма.', parse_mode='HTML')
+    await message.answer(f'🎬 <b>Вопрос {s["question_pos"]+1} из {len(qs)}</b>\n{escape(q["prompt"])}\n\nУ тебя 3 попытки. Напиши название фильма.', parse_mode='HTML')
 
 @router.message(Command('cancel'))
 async def cancel_game(message: Message):
@@ -74,7 +75,7 @@ async def answer(message: Message):
         if attempt >= 3:
             await db.execute('UPDATE sessions SET question_pos=question_pos+1,attempts=0 WHERE id=?', (row['id'],))
             await db.commit()
-            await message.answer(f'❌ Попытки закончились. Правильный ответ: <b>{row["answer"]}</b>.', parse_mode='HTML')
+            await message.answer(f'❌ Попытки закончились. Правильный ответ: <b>{escape(row["answer"])}</b>.', parse_mode='HTML')
             return await send_question(message, row['quiz_id'])
         await db.execute('UPDATE sessions SET attempts=? WHERE id=?', (attempt,row['id']))
         await db.commit()
