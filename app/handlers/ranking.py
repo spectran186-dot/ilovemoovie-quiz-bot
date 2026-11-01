@@ -1,4 +1,5 @@
 from aiogram import Router
+from html import escape
 from aiogram.filters import Command
 from aiogram.types import Message
 from ..db import connect
@@ -13,5 +14,5 @@ async def leaderboard(message: Message):
         rows = await cur.fetchall()
     if not rows: return await message.answer('Рейтинг пока пуст. Стань первым участником!')
     text = ['🏆 <b>Рейтинг @ilovemoovie</b>']
-    text += [f'{i}. {r["full_name"]} — {r["score"]} баллов' for i, r in enumerate(rows, 1)]
+    text += [f'{i}. {escape(r["full_name"])} — {r["score"]} баллов' for i, r in enumerate(rows, 1)]
     await message.answer('\n'.join(text), parse_mode='HTML')
