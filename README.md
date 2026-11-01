@@ -1,60 +1,96 @@
 # ilovemoovie quiz bot
 
-Telegram bot for personal movie-quiz sessions launched from posts in the [@ilovemoovie](https://t.me/ilovemoovie) channel.
+Cloudflare Workers + D1 implementation of the Telegram movie-quiz bot for [@ilovemoovie](https://t.me/ilovemoovie).
 
-## MVP features
+The production entry point is `src/index.ts`. The previous Python/aiogram prototype in `app/` is retained temporarily for reference and is **not** used by Cloudflare.
 
-- Admin creates quizzes with any number of free-text film questions
-- Optional accepted aliases for film titles
-- Quiz link published to the channel with a deep link to the bot
-- Quiz remains available for 48 hours after publication
-- Three attempts per question
-- Score: 10 / 7 / 4 points for the first / second / third attempt
-- One scored session per user per quiz; unfinished sessions can be resumed
-- Public leaderboard and `/privacy` opt-out
-- SQLite storage
+## Features
 
-## Requirements
+- Admin creates and publishes quizzes using Telegram commands
+- Free-text movie-title answers and optional aliases
+- Quiz deep-link button in the channel post
+- Quiz is open for 48 hours after publication
+- Three attempts per question; 10 / 7 / 4 points for attempt 1 / 2 / 3
+- One scored session per user per quiz
+- Incomplete session can be resumed from the quiz link
+- 20-minute session window, refreshed when the participant reopens the link
+- Public leaderboard; `/privacy` hides or restores a participant's name
+- Persistent state in Cloudflare D1; no always-on server or paid hosting required within free limits
 
-- Python 3.11+
-- Telegram bot token from [@BotFather](https://t.me/BotFather)
-- A Telegram channel where the bot is an administrator with permission to publish messages
+## Cloudflare setup
 
-## Local setup
+1. Create a free Cloudflare account and open **Workers & Pages**.
+2. Create a D1 database named `ilovemoovie-quiz-db`.
+3. Copy its database ID into `wrangler.jsonc`, replacing `REPLACE_WITH_D1_DATABASE_ID`.
+4. In `wrangler.jsonc`, replace:
+   - `REPLACE_WITH_TELEGRAM_USER_ID` with your numeric Telegram user ID (admin)
+   - `REPLACE_WITH_BOT_USERNAME` with the bot username, without `@`
+   - Check `CHANNEL_ID`. For a public channel, `@ilovemoovie` is accepted; the bot must be a channel administrator with permission to post.
+5. Apply the D1 migration:
+   ```bash
+   npx wrangler d1 migrations apply ilovemoovie-quiz-db --remote
+   ```
+6. Install dependencies and deploy:
+   ```bash
+   npm install
+   npx wrangler deploy
+   ```
+7. Add Worker secrets (never commit or paste them into source code):
+   ```bash
+   npx wrangler secret put BOT_TOKEN
+   npx wrangler secret put WEBHOOK_SECRET
+   ```
+   Use the BotFather token for `BOT_TOKEN`. For `WEBHOOK_SECRET`, use a long random string containing only letters, digits, underscores, or hyphens; keep it private.
+8. Set the Telegram webhook. Replace the two placeholders with the deployed Worker URL and the exact `WEBHOOK_SECRET` value:
+   ```bash
+   curl -X POST "https://api.telegram.org/bot< BOT_TOKEN >/setWebhook" \
+     -d "url=https://<WORKER_SUBDOMAIN>.workers.dev/telegram/webhook" \
+     -d "secret_token=<WEBHOOK_SECRET>" \
+     -d 'allowed_updates=["message"]'
+   ```
+   Remove the spaces inside `< BOT_TOKEN >` when inserting your token. Telegram should return `{"ok":true,"result":true,...}`.
+9. Check `https://<WORKER_SUBDOMAIN>.workers.dev/`. It should say `ilovemoovie quiz bot is running`.
 
-1. Clone this repository.
-2. Create and activate a virtual environment.
-3. Install packages: `pip install -r requirements.txt`.
-4. Copy `.env.example` to `.env`.
-5. Fill in the environment variables:
-   - `BOT_TOKEN` — token from BotFather
-   - `ADMIN_IDS` — Telegram numeric user IDs of admins, comma-separated
-   - `CHANNEL_ID` — channel ID, usually in the form `-100...`
-   - `CHANNEL_USERNAME` — public channel username without `@`
-6. Start the bot: `python -m app`.
+## Worker environment variables
 
-The database is created automatically at `DATABASE_PATH` (default: `data/quiz.sqlite3`).
+These are configured in `wrangler.jsonc` and deployed with the Worker:
 
-## Admin commands
+- `ADMIN_IDS` — numeric Telegram user IDs, comma-separated
+- `CHANNEL_ID` — channel ID or public channel username (e.g. `@ilovemoovie`)
+- `CHANNEL_USERNAME` — public channel username without `@`
+- `BOT_USERNAME` — bot username without `@`
+- `QUIZ_HOURS` — defaults to `48`
+- `SESSION_MINUTES` — defaults to `20`
 
-- `/newquiz` — start quiz creation
-- `/cancel` — cancel the current quiz draft
+Secrets `BOT_TOKEN` and `WEBHOOK_SECRET` are stored separately with `wrangler secret put`.
+
+## Telegram commands
+
+Admin:
+- `/newquiz` — create a quiz
+- `/cancel` — cancel the current draft
 - `/quizlist` — list recent quizzes
-- `/publish ID` — publish a saved draft to the channel
+- `/publish ID` — publish a saved quiz
 
-Quiz creation flow: title → question text → correct film title → aliases separated by semicolons (or send `—`) → `+` for another question or `готово` to save.
+During quiz creation: title → question → correct film title → aliases separated by semicolons (or `—`) → `+` for another question or `готово` to save.
 
-## Participant commands
+Participants:
+- Open the button below a quiz post to start or resume
+- `/leaderboard` — top 20 participants
+- `/privacy` — toggle leaderboard visibility
 
-- Open the button under a quiz post to start or resume the quiz
-- `/leaderboard` — show the top 20 participants
-- `/privacy` — toggle visibility in the leaderboard
-
-## Tests
+## Local development and tests
 
 ```bash
-python -m compileall -q app
-python -m pytest -q
+npm install
+npm run typecheck
+npx wrangler dev
 ```
 
-Never commit `.env`, bot tokens, or the SQLite database.
+The Worker uses the local D1 database when running `wrangler dev`. Apply migrations locally with:
+
+```bash
+npx wrangler d1 migrations apply ilovemoovie-quiz-db --local
+```
+
+Never commit bot tokens, webhook secrets, or private credentials.
