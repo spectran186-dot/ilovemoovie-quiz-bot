@@ -5,10 +5,10 @@
   "compatibility_date": "2026-11-02",
   "observability": { "enabled": true },
   "vars": {
-    "ADMIN_IDS": "REPLACE_WITH_TELEGRAM_USER_ID",
+    "ADMIN_IDS": "323262204",
     "CHANNEL_ID": "@ilovemoovie",
     "CHANNEL_USERNAME": "ilovemoovie",
-    "BOT_USERNAME": "REPLACE_WITH_BOT_USERNAME",
+    "BOT_USERNAME": "Ilovemoovie_bot",
     "QUIZ_HOURS": "48",
     "SESSION_MINUTES": "20"
   },
