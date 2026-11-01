@@ -1,3 +1,12 @@
+interface D1PreparedStatement {
+  bind(...values: Array<string | number | boolean | null>): D1PreparedStatement;
+  first<T = Record<string, unknown>>(): Promise<T | null>;
+  all<T = Record<string, unknown>>(): Promise<{ results: T[] }>;
+  run(): Promise<{ meta: { last_row_id?: number } }>;
+}
+interface D1Database {
+  prepare(query: string): D1PreparedStatement;
+}
 export interface Env {
   DB: D1Database;
   BOT_TOKEN: string;
