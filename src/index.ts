@@ -152,8 +152,7 @@ async function participantMessage(env:Env,m:TgMessage){
   const s=await env.DB.prepare("SELECT s.*,q.id AS question_id,q.answer FROM sessions s JOIN questions q ON q.quiz_id=s.quiz_id AND q.position=s.question_pos WHERE s.user_id=? AND s.completed=0 ORDER BY s.started_at DESC LIMIT 1").bind(uid).first<any>();
   if(!s)return;
   if(Date.parse(s.expires_at)<=Date.now()){
-    await env.DB.prepare("UPDATE sessions SET completed=1 WHERE id=?").bind(s.id).run();
-    return say(env,chat,"Время игровой сессии истекло. Повторно открыть эту викторину уже нельзя.");
+    return say(env,chat,"Время игровой сессии истекло. Твой прогресс сохранён. Открой кнопку участия в посте викторины, чтобы продолжить.");
   }
   const aliases=await env.DB.prepare("SELECT alias FROM aliases WHERE question_id=?").bind(s.question_id).all<{alias:string}>();
   const accepted=[s.answer,...aliases.results.map(x=>x.alias)];
