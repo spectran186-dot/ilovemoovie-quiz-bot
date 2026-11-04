@@ -65,7 +65,7 @@ async function saveQuiz(env:Env,id:number,d:Draft){
 async function adminMessage(env:Env,m:TgMessage){
   const uid=m.from!.id, text=(m.text||"").trim(), chat=m.chat.id;
   const [cmd,...args]=text.split(/\s+/);
-  if((cmd==="/start"||cmd==="/privacy"||cmd==="/leaderboard")&&!await getDraft(env,uid)) return participantMessage(env,m);
+  // Participant commands must always bypass the admin draft wizard. Otherwise a\n  // command sent while a draft is open can accidentally become a title/question/answer.\n  if(cmd==="/start"||cmd==="/privacy"||cmd==="/leaderboard") return participantMessage(env,m);
   if(cmd==="/cancel"){await putDraft(env,uid,null);return say(env,chat,"Создание викторины отменено.");}
   if(cmd==="/newquiz"){await putDraft(env,uid,{stage:"title",questions:[]});return say(env,chat,"Создание викторины. Отправь её название.");}
   if(cmd==="/quizlist"){
