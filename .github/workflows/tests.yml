@@ -23,4 +23,22 @@ jobs:
           python-version: '3.12'
       - run: pip install -r requirements.txt
       - run: python -m compileall -q app
-      - run: python -m pytest -q\n  deploy:\n    if: github.event_name == 'push' && github.ref == 'refs/heads/main'\n    needs: [worker, legacy-python-tests]\n    runs-on: ubuntu-latest\n    permissions:\n      contents: read\n    steps:\n      - uses: actions/checkout@v4\n      - uses: actions/setup-node@v4\n        with:\n          node-version: '22'\n      - run: npm install\n      - name: Deploy Worker to Cloudflare\n        run: npm run deploy\n        env:\n          CLOUDFLARE_API_TOKEN: ${{ secrets.CLOUDFLARE_API_TOKEN }}\n          CLOUDFLARE_ACCOUNT_ID: e300c711ebfed1c3d8c03a7981338688\n
+      - run: python -m pytest -q
+
+  deploy:
+    if: github.event_name == 'push' && github.ref == 'refs/heads/main'
+    needs: [worker, legacy-python-tests]
+    runs-on: ubuntu-latest
+    permissions:
+      contents: read
+    steps:
+      - uses: actions/checkout@v4
+      - uses: actions/setup-node@v4
+        with:
+          node-version: '22'
+      - run: npm install
+      - name: Deploy Worker to Cloudflare
+        run: npm run deploy
+        env:
+          CLOUDFLARE_API_TOKEN: ${{ secrets.CLOUDFLARE_API_TOKEN }}
+          CLOUDFLARE_ACCOUNT_ID: e300c711ebfed1c3d8c03a7981338688
