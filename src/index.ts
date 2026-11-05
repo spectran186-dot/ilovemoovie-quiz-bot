@@ -34,7 +34,7 @@ async function tg(env:Env,method:string,body:Record<string,unknown>){
   if(!r.ok||!data.ok) throw new Error(data.description||`Telegram API ${method} failed`);
   return data.result;
 }
-async function editGame(env:Env,chat_id:number,message_id:number,text:string){ return tg(env,"editMessageText",{chat_id,message_id,text,parse_mode:"HTML"}); }
+async function editGame(env:Env,chat_id:number,message_id:number,text:string){ return tg(env,"editMessageText",{chat_id,message_id,text,parse_mode:"HTML",reply_markup:{inline_keyboard:[]}}); }
 async function removeAnswer(env:Env,chat_id:number,message_id:number){ try { await tg(env,"deleteMessage",{chat_id,message_id}); } catch {} }
 async function say(env:Env,chat_id:number,text:string,extra:Record<string,unknown>={}){
   return tg(env,"sendMessage",{chat_id,text,parse_mode:"HTML",...extra});
@@ -94,7 +94,7 @@ async function adminMessage(env:Env,m:TgMessage){
   else if(d.stage==="mode"){if(text!=="1"&&text!=="2")return say(env,chat,"Выбери 1 — варианты ответа или 2 — свободный ввод.");d.mode=text==="1"?"choice":"text";d.stage="category";}
   else if(d.stage==="category"){d.category=text;d.stage="prompt";}
   else if(d.stage==="prompt"){if(!text)return say(env,chat,"Вопрос не должен быть пустым.");d.prompt=text;d.stage=d.mode==="choice"?"options":"answer";}
-  else if(d.stage==="options"){const a=text.split("\\n").map(x=>x.trim()).filter(Boolean);if(a.length<2||a.length>6)return say(env,chat,"Отправь 2–6 вариантов, каждый с новой строки.");d.options=a;d.stage="correct";}
+  else if(d.stage==="options"){const a=text.split(/\r?\n/).map(x=>x.trim()).filter(Boolean);if(a.length<2||a.length>6)return say(env,chat,"Отправь 2–6 вариантов, каждый с новой строки.");d.options=a;d.stage="correct";}
   else if(d.stage==="correct"){const n=Number(text);if(!Number.isInteger(n)||n<1||n>(d.options||[]).length)return say(env,chat,"Отправь номер правильного варианта.");d.answer=d.options![n-1];d.stage="aliases";}
   else if(d.stage==="answer"){if(!text)return say(env,chat,"Ответ не должен быть пустым.");d.answer=text;d.options=[];d.stage="aliases";}
   else if(d.stage==="aliases"){d.questions.push({prompt:d.prompt!,answer:d.answer!,aliases:text==="—"?[]:text.split(";").map(x=>x.trim()).filter(Boolean),options:d.options||[]});d.stage="more";}
@@ -162,13 +162,11 @@ async function participantMessage(env:Env,m:TgMessage){
   if(correct){ const score=s.score+POINTS[attempt]; await env.DB.prepare("UPDATE sessions SET score=?,question_pos=question_pos+1,attempts=0 WHERE id=?").bind(score,s.id).run(); return sendQuestion(env,chat,uid,s.quiz_id,"✅ Верно! +"+POINTS[attempt]+" баллов. Всего: "+score+"."); }
   if(attempt>=3){ await env.DB.prepare("UPDATE sessions SET question_pos=question_pos+1,attempts=0 WHERE id=?").bind(s.id).run(); return sendQuestion(env,chat,uid,s.quiz_id,"❌ Попытки закончились. Правильный ответ: <b>"+esc(s.answer)+"</b>."); }
   await env.DB.prepare("UPDATE sessions SET attempts=? WHERE id=?").bind(attempt,s.id).run();
-  const q=await env.DB.prepare("SELECT prompt FROM questions WHERE id=?").bind(s.question_id).first<{prompt:string}>();
-  const body="❌ Не угадал. Осталось попыток: "+(3-attempt)+".\n\n🎬 <b>Вопрос "+(s.question_pos+1)+"</b>\n"+esc(q?.prompt||"")+"\n\nПопробуй ещё раз — напиши ответ сообщением.";
-  if(s.game_message_id)return editGame(env,chat,s.game_message_id,body); return say(env,chat,body);
+  return sendQuestion(env,chat,uid,s.quiz_id,"❌ Не угадал. Осталось попыток: "+(3-attempt)+".");
 }
 async function handleUpdate(env:Env,u:Update){
   if(u.callback_query){
-    const c=u.callback_query, data=c.data||"", match=data.match(/^a:(\\d+):(\\d+):(\\d+)$/);
+    const c=u.callback_query, data=c.data||"", match=data.match(/^a:(\d+):(\d+):(\d+)$/);
     if(!match||!c.message||c.message.chat.type!=="private") { await tg(env,"answerCallbackQuery",{callback_query_id:c.id,text:"Кнопка устарела. Открой викторину заново."}); return; }
     const quizId=Number(match[1]), questionId=Number(match[2]), index=Number(match[3]);
     const session=await env.DB.prepare("SELECT question_pos,quiz_id,completed FROM sessions WHERE user_id=? AND quiz_id=?").bind(c.from.id,quizId).first<any>();
