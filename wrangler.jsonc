@@ -6,8 +6,7 @@
   "observability": { "enabled": true },
   "vars": {
     "ADMIN_IDS": "323262204",
-    "CHANNEL_ID": "@ilovemoovie",
-    "CHANNEL_USERNAME": "ilovemoovie",
+    "CHANNEL_ID": "-1004402345621",
     "BOT_USERNAME": "Ilovemoovie_bot",
     "QUIZ_HOURS": "48",
     "SESSION_MINUTES": "20"
