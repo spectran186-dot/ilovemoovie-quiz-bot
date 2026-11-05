@@ -19,7 +19,8 @@ export interface Env {
 }
 type TgUser = { id:number; username?:string; first_name?:string; last_name?:string };
 type TgMessage = { message_id:number; text?:string; from?:TgUser; chat:{id:number;type:string} };
-type Update = { update_id:number; message?:TgMessage };
+type TgCallback = { id:string; from:TgUser; data?:string; message?:TgMessage };
+type Update = { update_id:number; message?:TgMessage; callback_query?:TgCallback };
 type Draft = { stage:string; title?:string; mode?:"text"|"choice"; category?:string; questions:Array<{prompt:string;answer:string;aliases:string[];options:string[]}>; prompt?:string; answer?:string; options?:string[] };
 const POINTS:Record<number,number>={1:10,2:7,3:4};
 const isoNow=()=>new Date().toISOString();
@@ -111,11 +112,23 @@ async function adminMessage(env:Env,m:TgMessage){
 async function sendQuestion(env:Env,chat:number,userId:number,quizId:number,feedback=""){
   const s=await env.DB.prepare("SELECT * FROM sessions WHERE user_id=? AND quiz_id=?").bind(userId,quizId).first<any>();
   if(!s||s.completed)return;
-  const q=await env.DB.prepare("SELECT id,prompt FROM questions WHERE quiz_id=? ORDER BY position LIMIT 1 OFFSET ?").bind(quizId,s.question_pos).first<{id:number;prompt:string}>();
+  const q=await env.DB.prepare("SELECT id,prompt,options FROM questions WHERE quiz_id=? ORDER BY position LIMIT 1 OFFSET ?").bind(quizId,s.question_pos).first<{id:number;prompt:string;options:string}>();
+  const quiz=await env.DB.prepare("SELECT answer_mode FROM quizzes WHERE id=?").bind(quizId).first<{answer_mode:string}>();
   const total=await env.DB.prepare("SELECT COUNT(*) AS n FROM questions WHERE quiz_id=?").bind(quizId).first<{n:number}>();
   let body:string;
   if(!q){ await env.DB.prepare("UPDATE sessions SET completed=1 WHERE id=?").bind(s.id).run(); body="🎉 <b>Викторина завершена!</b>\nТвой результат: "+s.score+" баллов.\n/leaderboard — общий рейтинг."; }
-  else { body=(feedback?feedback+"\n\n":"")+"🎬 <b>Вопрос "+(s.question_pos+1)+" из "+(total?.n||0)+"</b>\n"+esc(q.prompt)+"\n\nУ тебя 3 попытки. Напиши свой ответ сообщением."; }
+  else {
+    body=(feedback?feedback+"\n\n":"")+"🎬 <b>Вопрос "+(s.question_pos+1)+" из "+(total?.n||0)+"</b>\n"+esc(q.prompt)+"\n\nУ тебя 3 попытки.";
+    if(quiz?.answer_mode==="choice"){
+      const options=JSON.parse(q.options||"[]") as string[];
+      body+="\nВыбери один вариант:";
+      const reply_markup={inline_keyboard:options.map((v,i)=>[{text:v,callback_data:"a:"+quizId+":"+q.id+":"+i}])};
+      if(s.game_message_id) await tg(env,"editMessageText",{chat_id:chat,message_id:s.game_message_id,text:body,parse_mode:"HTML",reply_markup});
+      else { const sent=await say(env,chat,body,{reply_markup}) as {message_id:number}; await env.DB.prepare("UPDATE sessions SET game_message_id=? WHERE id=?").bind(sent.message_id,s.id).run(); }
+      return;
+    }
+    body+="\nНапиши свой ответ сообщением.";
+  }
   if(s.game_message_id) await editGame(env,chat,s.game_message_id,body);
   else { const sent=await say(env,chat,body) as {message_id:number}; await env.DB.prepare("UPDATE sessions SET game_message_id=? WHERE id=?").bind(sent.message_id,s.id).run(); }
 }
@@ -154,6 +167,22 @@ async function participantMessage(env:Env,m:TgMessage){
   if(s.game_message_id)return editGame(env,chat,s.game_message_id,body); return say(env,chat,body);
 }
 async function handleUpdate(env:Env,u:Update){
+  if(u.callback_query){
+    const c=u.callback_query, data=c.data||"", match=data.match(/^a:(\\d+):(\\d+):(\\d+)$/);
+    if(!match||!c.message||c.message.chat.type!=="private") { await tg(env,"answerCallbackQuery",{callback_query_id:c.id,text:"Кнопка устарела. Открой викторину заново."}); return; }
+    const quizId=Number(match[1]), questionId=Number(match[2]), index=Number(match[3]);
+    const session=await env.DB.prepare("SELECT question_pos,quiz_id,completed FROM sessions WHERE user_id=? AND quiz_id=?").bind(c.from.id,quizId).first<any>();
+    const current=await env.DB.prepare("SELECT id,options FROM questions WHERE quiz_id=? ORDER BY position LIMIT 1 OFFSET ?").bind(quizId,session?.question_pos||0).first<any>();
+    if(!session||session.completed||!current||questionId!==current.id){
+      await tg(env,"answerCallbackQuery",{callback_query_id:c.id,text:"Этот вопрос уже завершён."}); return;
+    }
+    const options=JSON.parse(current.options||"[]") as string[], chosen=options[index];
+    if(!chosen){await tg(env,"answerCallbackQuery",{callback_query_id:c.id,text:"Вариант не найден."});return;}
+    await tg(env,"answerCallbackQuery",{callback_query_id:c.id});
+    await userUpsert(env,c.from);
+    const fake:TgMessage={message_id:0,text:chosen,from:c.from,chat:c.message.chat};
+    return participantMessage(env,fake);
+  }
   const m=u.message;
   if(!m?.from||!m.text||m.chat.type!=="private")return;
   await userUpsert(env,m.from);
