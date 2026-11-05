@@ -13,7 +13,6 @@ export interface Env {
   WEBHOOK_SECRET: string;
   ADMIN_IDS: string;
   CHANNEL_ID: string;
-  CHANNEL_USERNAME: string;
   BOT_USERNAME: string;
   QUIZ_HOURS?: string;
   SESSION_MINUTES?: string;
@@ -80,9 +79,9 @@ async function adminMessage(env:Env,m:TgMessage){
     if(!q) return say(env,chat,"Черновик не найден или уже опубликован.");
     const count=await env.DB.prepare("SELECT COUNT(*) AS n FROM questions WHERE quiz_id=?").bind(id).first<{n:number}>();
     if(!count?.n) return say(env,chat,"В черновике нет вопросов.");
-    if(!env.CHANNEL_ID||!env.CHANNEL_USERNAME||!env.BOT_USERNAME) return say(env,chat,"Не настроены CHANNEL_ID, CHANNEL_USERNAME или BOT_USERNAME в Cloudflare.");
+    if(!env.CHANNEL_ID||!env.BOT_USERNAME) return say(env,chat,"Не настроены CHANNEL_ID или BOT_USERNAME в Cloudflare.");
     const hours=Number(env.QUIZ_HOURS||48), end=new Date(Date.now()+hours*3600000).toISOString();
-    const sent=await tg(env,"sendMessage",{chat_id:env.CHANNEL_ID,parse_mode:"HTML",text:`🎬 <b>${esc(q.title)}</b>\n\nНовая кино-викторина канала @${env.CHANNEL_USERNAME}!\nВнутри ${count.n} вопросов. На каждый — три попытки. Викторина доступна ${hours} часов.`,reply_markup:{inline_keyboard:[[{text:"🎬 Участвовать в викторине",url:`https://t.me/${env.BOT_USERNAME}?start=quiz_${id}`}]]}}) as {message_id:number};
+    const sent=await tg(env,"sendMessage",{chat_id:env.CHANNEL_ID,parse_mode:"HTML",text:`🎬 <b>${esc(q.title)}</b>\n\nНовая кино-викторина!\nВнутри ${count.n} вопросов. На каждый — три попытки. Викторина доступна ${hours} часов.`,reply_markup:{inline_keyboard:[[{text:"🎬 Участвовать в викторине",url:`https://t.me/${env.BOT_USERNAME}?start=quiz_${id}`}]]}}) as {message_id:number};
     await env.DB.prepare("UPDATE quizzes SET status='published',published_at=?,ends_at=?,channel_message_id=? WHERE id=?").bind(isoNow(),end,sent.message_id,id).run();
     return say(env,chat,`Викторина #${id} опубликована в канале.`);
   }
@@ -135,7 +134,7 @@ async function participantMessage(env:Env,m:TgMessage){
     const payload=text.split(/\s+/,2)[1]||"";
     const match=payload.match(/^quiz_(\d+)$/);
     if(match)return beginQuiz(env,m,Number(match[1]));
-    return say(env,chat,"Привет! Я бот закрытых кино-викторин канала @ilovemoovie. Открой кнопку под постом с викториной, чтобы начать игру.\n\n/leaderboard — рейтинг\n/privacy — скрыть имя в рейтинге.");
+    return say(env,chat,"Привет! Я бот кино-викторин. Открой кнопку под постом с викториной, чтобы начать игру.\n\n/leaderboard — рейтинг\n/privacy — скрыть имя в рейтинге.");
   }
   if(text==="/privacy"){
     const u=await env.DB.prepare("SELECT private FROM users WHERE id=?").bind(uid).first<{private:number}>();
@@ -147,7 +146,7 @@ async function participantMessage(env:Env,m:TgMessage){
   if(text==="/leaderboard"){
     const r=await env.DB.prepare("SELECT u.full_name,SUM(s.score) score FROM sessions s JOIN users u ON u.id=s.user_id WHERE s.completed=1 AND u.private=0 GROUP BY u.id ORDER BY score DESC,u.full_name LIMIT 20").all<{full_name:string;score:number}>();
     if(!r.results.length)return say(env,chat,"Рейтинг пока пуст. Стань первым участником!");
-    return say(env,chat,"🏆 <b>Рейтинг @ilovemoovie</b>\n"+r.results.map((x,i)=>`${i+1}. ${esc(x.full_name)} — ${x.score} баллов`).join("\n"));
+    return say(env,chat,"🏆 <b>Рейтинг кино-викторины</b>\n"+r.results.map((x,i)=>`${i+1}. ${esc(x.full_name)} — ${x.score} баллов`).join("\n"));
   }
   if(!text||text.startsWith("/"))return;
   const s=await env.DB.prepare("SELECT s.*,q.id AS question_id,q.answer FROM sessions s JOIN questions q ON q.quiz_id=s.quiz_id AND q.position=s.question_pos WHERE s.user_id=? AND s.completed=0 ORDER BY s.started_at DESC LIMIT 1").bind(uid).first<any>();
