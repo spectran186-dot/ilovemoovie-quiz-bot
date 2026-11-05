@@ -35,7 +35,22 @@ async function tg(env:Env,method:string,body:Record<string,unknown>){
   if(!r.ok||!data.ok) throw new Error(data.description||`Telegram API ${method} failed`);
   return data.result;
 }
-async function editGame(env:Env,chat_id:number,message_id:number,text:string){ return tg(env,"editMessageText",{chat_id,message_id,text,parse_mode:"HTML",reply_markup:{inline_keyboard:[]}}); }
+async function editGame(env:Env,chat_id:number,message_id:number,text:string,reply_markup?:Record<string,unknown>){
+  return tg(env,"editMessageText",{chat_id,message_id,text,parse_mode:"HTML",reply_markup:reply_markup||{inline_keyboard:[]}});
+}
+async function editOrSendGame(env:Env,chat:number,messageId:number|null|undefined,text:string,sessionId:number,reply_markup?:Record<string,unknown>){
+  if(messageId){
+    try { await editGame(env,chat,messageId,text,reply_markup); return; }
+    catch(e){
+      const reason=String(e);
+      // Telegram returns 400 when the requested content is identical; this is not a gameplay failure.
+      if(reason.includes("message is not modified")) return;
+      console.error("Game message edit failed; sending replacement",reason);
+    }
+  }
+  const sent=await say(env,chat,text,reply_markup?{reply_markup}:{}) as {message_id:number};
+  await env.DB.prepare("UPDATE sessions SET game_message_id=? WHERE id=?").bind(sent.message_id,sessionId).run();
+}
 async function removeAnswer(env:Env,chat_id:number,message_id:number){ try { await tg(env,"deleteMessage",{chat_id,message_id}); } catch {} }
 async function say(env:Env,chat_id:number,text:string,extra:Record<string,unknown>={}){
   return tg(env,"sendMessage",{chat_id,text,parse_mode:"HTML",...extra});
@@ -129,14 +144,12 @@ async function sendQuestion(env:Env,chat:number,userId:number,quizId:number,feed
       const options=JSON.parse(q.options||"[]") as string[];
       body+="\nВыбери один вариант:";
       const reply_markup={inline_keyboard:options.map((v,i)=>[{text:v,callback_data:"a:"+quizId+":"+q.id+":"+i}])};
-      if(s.game_message_id) await tg(env,"editMessageText",{chat_id:chat,message_id:s.game_message_id,text:body,parse_mode:"HTML",reply_markup});
-      else { const sent=await say(env,chat,body,{reply_markup}) as {message_id:number}; await env.DB.prepare("UPDATE sessions SET game_message_id=? WHERE id=?").bind(sent.message_id,s.id).run(); }
+      await editOrSendGame(env,chat,s.game_message_id,body,s.id,reply_markup);
       return;
     }
     body+="\nНапиши свой ответ сообщением.";
   }
-  if(s.game_message_id) await editGame(env,chat,s.game_message_id,body);
-  else { const sent=await say(env,chat,body) as {message_id:number}; await env.DB.prepare("UPDATE sessions SET game_message_id=? WHERE id=?").bind(sent.message_id,s.id).run(); }
+  await editOrSendGame(env,chat,s.game_message_id,body,s.id);
 }
 async function beginQuiz(env:Env,m:TgMessage,quizId:number){
   const uid=m.from!.id,chat=m.chat.id;
@@ -159,7 +172,7 @@ async function participantMessage(env:Env,m:TgMessage){
   if(text==="/privacy"){ const u=await env.DB.prepare("SELECT private FROM users WHERE id=?").bind(uid).first<{private:number}>(); if(!u)return say(env,chat,"Сначала отправь /start."); const next=u.private?0:1; await env.DB.prepare("UPDATE users SET private=? WHERE id=?").bind(next,uid).run(); return say(env,chat,next?"Твоё имя скрыто в рейтинге.":"Твоё имя снова отображается в рейтинге."); }
   if(text==="/leaderboard"){ const r=await env.DB.prepare("SELECT u.full_name,SUM(s.score) score FROM sessions s JOIN users u ON u.id=s.user_id WHERE s.completed=1 AND u.private=0 GROUP BY u.id ORDER BY score DESC,u.full_name LIMIT 20").all<{full_name:string;score:number}>(); if(!r.results.length)return say(env,chat,"Рейтинг пока пуст. Стань первым участником!"); return say(env,chat,"🏆 <b>Рейтинг кино-викторины</b>\n"+r.results.map((x,i)=>(i+1)+". "+esc(x.full_name)+" — "+x.score+" баллов").join("\n")); }
   if(!text||text.startsWith("/"))return;
-  const s=await env.DB.prepare("SELECT s.*,q.id AS question_id,q.answer FROM sessions s JOIN questions q ON q.quiz_id=s.quiz_id AND q.position=s.question_pos WHERE s.user_id=? AND s.completed=0 ORDER BY s.started_at DESC LIMIT 1").bind(uid).first<any>();
+  const s=await env.DB.prepare("SELECT s.*,q.id AS question_id,q.answer FROM sessions s JOIN questions q ON q.id=(SELECT id FROM questions WHERE quiz_id=s.quiz_id ORDER BY position LIMIT 1 OFFSET s.question_pos) WHERE s.user_id=? AND s.completed=0 ORDER BY s.started_at DESC LIMIT 1").bind(uid).first<any>();
   if(!s)return;
   if(Date.parse(s.expires_at)<=Date.now())return say(env,chat,"Время игровой сессии истекло. Прогресс сохранён. Открой кнопку участия в посте, чтобы продолжить.");
   try { await tg(env,"deleteMessage",{chat_id:chat,message_id:m.message_id}); } catch {}
