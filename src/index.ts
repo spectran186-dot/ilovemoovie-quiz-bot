@@ -16,11 +16,13 @@ export interface Env {
   BOT_USERNAME: string;
   QUIZ_HOURS?: string;
   SESSION_MINUTES?: string;
+  WEBHOOK_URL?: string;
 }
 type TgUser = { id:number; username?:string; first_name?:string; last_name?:string };
 type TgMessage = { message_id:number; text?:string; from?:TgUser; chat:{id:number;type:string} };
-type Update = { update_id:number; message?:TgMessage };
-type Draft = { stage:string; title?:string; questions:Array<{prompt:string;answer:string;aliases:string[]}>; prompt?:string; answer?:string };
+type TgCallback = { id:string; from:TgUser; data?:string; message?:TgMessage };
+type Update = { update_id:number; message?:TgMessage; callback_query?:TgCallback };
+type Draft = { stage:string; title?:string; mode?:"text"|"choice"; category?:string; questions:Array<{prompt:string;answer:string;aliases:string[];options:string[]}>; prompt?:string; answer?:string; options?:string[] };
 const POINTS:Record<number,number>={1:10,2:7,3:4};
 const isoNow=()=>new Date().toISOString();
 const norm=(s:string)=>s.toLocaleLowerCase("ru-RU").replace(/ё/g,"е").normalize("NFKC").replace(/[^\p{L}\p{N}\s]/gu," ").trim().replace(/\s+/g," ");
@@ -33,6 +35,8 @@ async function tg(env:Env,method:string,body:Record<string,unknown>){
   if(!r.ok||!data.ok) throw new Error(data.description||`Telegram API ${method} failed`);
   return data.result;
 }
+async function editGame(env:Env,chat_id:number,message_id:number,text:string){ return tg(env,"editMessageText",{chat_id,message_id,text,parse_mode:"HTML",reply_markup:{inline_keyboard:[]}}); }
+async function removeAnswer(env:Env,chat_id:number,message_id:number){ try { await tg(env,"deleteMessage",{chat_id,message_id}); } catch {} }
 async function say(env:Env,chat_id:number,text:string,extra:Record<string,unknown>={}){
   return tg(env,"sendMessage",{chat_id,text,parse_mode:"HTML",...extra});
 }
@@ -50,11 +54,11 @@ async function putDraft(env:Env,id:number,d:Draft|null){
   else await env.DB.prepare("DELETE FROM admin_drafts WHERE admin_id=?").bind(id).run();
 }
 async function saveQuiz(env:Env,id:number,d:Draft){
-  const result=await env.DB.prepare("INSERT INTO quizzes(title,status,created_at) VALUES(?,'draft',?)").bind(d.title||"",isoNow()).run();
+  const result=await env.DB.prepare("INSERT INTO quizzes(title,status,created_at,answer_mode,category) VALUES(?,'draft',?,?,?)").bind(d.title||"",isoNow(),d.mode||"text",d.category||"Фильм").run();
   const quizId=Number(result.meta.last_row_id);
   for(let i=0;i<d.questions.length;i++){
     const q=d.questions[i];
-    const qr=await env.DB.prepare("INSERT INTO questions(quiz_id,position,prompt,answer) VALUES(?,?,?,?)").bind(quizId,i+1,q.prompt,q.answer).run();
+    const qr=await env.DB.prepare("INSERT INTO questions(quiz_id,position,prompt,answer,options) VALUES(?,?,?,?,?)").bind(quizId,i+1,q.prompt,q.answer,JSON.stringify(q.options||[])).run();
     const qid=Number(qr.meta.last_row_id);
     for(const a of q.aliases) await env.DB.prepare("INSERT INTO aliases(question_id,alias) VALUES(?,?)").bind(qid,a).run();
   }
@@ -66,6 +70,11 @@ async function adminMessage(env:Env,m:TgMessage){
   const [cmd,...args]=text.split(/\s+/);
   // Always route participant commands outside the admin draft wizard.
   if(cmd==="/start"||cmd==="/privacy"||cmd==="/leaderboard") return participantMessage(env,m);
+  if(cmd==="/refreshwebhook"){
+    if(!env.WEBHOOK_URL) return say(env,chat,"Не задан WEBHOOK_URL в настройках Worker.");
+    await tg(env,"setWebhook",{url:env.WEBHOOK_URL,secret_token:env.WEBHOOK_SECRET,allowed_updates:["message","callback_query"],max_connections:40});
+    return say(env,chat,"Webhook обновлён: теперь принимаются сообщения и нажатия inline-кнопок.");
+  }
   if(cmd==="/cancel"){await putDraft(env,uid,null);return say(env,chat,"Создание викторины отменено.");}
   if(cmd==="/newquiz"){await putDraft(env,uid,{stage:"title",questions:[]});return say(env,chat,"Создание викторины. Отправь её название.");}
   if(cmd==="/quizlist"){
@@ -86,11 +95,15 @@ async function adminMessage(env:Env,m:TgMessage){
     return say(env,chat,`Викторина #${id} опубликована в канале.`);
   }
   const d=await getDraft(env,uid);
-  if(!d) return say(env,chat,"Команды администратора: /newquiz, /quizlist, /publish ID, /cancel.");
-  if(d.stage==="title"){if(!text)return say(env,chat,"Название не должно быть пустым.");d.title=text;d.stage="prompt";}
-  else if(d.stage==="prompt"){if(!text)return say(env,chat,"Вопрос не должен быть пустым.");d.prompt=text;d.stage="answer";}
-  else if(d.stage==="answer"){if(!text)return say(env,chat,"Ответ не должен быть пустым.");d.answer=text;d.stage="aliases";}
-  else if(d.stage==="aliases"){d.questions.push({prompt:d.prompt!,answer:d.answer!,aliases:text==="—"?[]:text.split(";").map(x=>x.trim()).filter(Boolean)});d.stage="more";}
+  if(!d) return say(env,chat,"Команды администратора: /newquiz, /quizlist, /publish ID, /refreshwebhook, /cancel.");
+  if(d.stage==="title"){if(!text)return say(env,chat,"Название не должно быть пустым.");d.title=text;d.stage="mode";}
+  else if(d.stage==="mode"){if(text!=="1"&&text!=="2")return say(env,chat,"Выбери 1 — варианты ответа или 2 — свободный ввод.");d.mode=text==="1"?"choice":"text";d.stage="category";}
+  else if(d.stage==="category"){d.category=text;d.stage="prompt";}
+  else if(d.stage==="prompt"){if(!text)return say(env,chat,"Вопрос не должен быть пустым.");d.prompt=text;d.stage=d.mode==="choice"?"options":"answer";}
+  else if(d.stage==="options"){const a=text.split(/\r?\n/).map(x=>x.trim()).filter(Boolean);if(a.length<2||a.length>6)return say(env,chat,"Отправь 2–6 вариантов, каждый с новой строки.");d.options=a;d.stage="correct";}
+  else if(d.stage==="correct"){const n=Number(text);if(!Number.isInteger(n)||n<1||n>(d.options||[]).length)return say(env,chat,"Отправь номер правильного варианта.");d.answer=d.options![n-1];d.stage="aliases";}
+  else if(d.stage==="answer"){if(!text)return say(env,chat,"Ответ не должен быть пустым.");d.answer=text;d.options=[];d.stage="aliases";}
+  else if(d.stage==="aliases"){d.questions.push({prompt:d.prompt!,answer:d.answer!,aliases:text==="—"?[]:text.split(";").map(x=>x.trim()).filter(Boolean),options:d.options||[]});d.stage="more";}
   else if(d.stage==="more"){
     if(text==="+"){d.stage="prompt";}
     else if(["готово","готово!","done"].includes(text.toLowerCase())){
@@ -99,19 +112,31 @@ async function adminMessage(env:Env,m:TgMessage){
     } else return say(env,chat,"Отправь «+» для следующего вопроса или «готово» для сохранения.");
   }
   await putDraft(env,uid,d);
-  const prompts:Record<string,string>={prompt:"Отправь текст вопроса.",answer:"Укажи правильный ответ — название фильма.",aliases:"Укажи альтернативные варианты через ; или отправь —",more:`Вопросов добавлено: ${d.questions.length}. Отправь «+» для следующего вопроса или «готово» для сохранения.`};
+  const prompts:Record<string,string>={mode:"Режим ответа: 1 — выбор из вариантов; 2 — свободный ввод.",category:"Категория: фильм, актёр, актриса, режиссёр, персонаж, сериал, саундтрек, кадр или своя.",prompt:"Отправь текст вопроса.",options:"Отправь 2–6 вариантов, каждый с новой строки.",correct:"Отправь номер правильного варианта.",answer:"Укажи правильный ответ.",aliases:"Укажи альтернативные варианты через ; или отправь —",more:`Вопросов добавлено: ${d.questions.length}. Отправь «+» для следующего вопроса или «готово» для сохранения.`};
   return say(env,chat,d.stage==="title"?"Отправь название викторины.":prompts[d.stage]||"Продолжим.");
 }
-async function sendQuestion(env:Env,chat:number,userId:number,quizId:number){
+async function sendQuestion(env:Env,chat:number,userId:number,quizId:number,feedback=""){
   const s=await env.DB.prepare("SELECT * FROM sessions WHERE user_id=? AND quiz_id=?").bind(userId,quizId).first<any>();
   if(!s||s.completed)return;
-  const q=await env.DB.prepare("SELECT id,prompt FROM questions WHERE quiz_id=? ORDER BY position LIMIT 1 OFFSET ?").bind(quizId,s.question_pos).first<{id:number;prompt:string}>();
+  const q=await env.DB.prepare("SELECT id,prompt,options FROM questions WHERE quiz_id=? ORDER BY position LIMIT 1 OFFSET ?").bind(quizId,s.question_pos).first<{id:number;prompt:string;options:string}>();
+  const quiz=await env.DB.prepare("SELECT answer_mode FROM quizzes WHERE id=?").bind(quizId).first<{answer_mode:string}>();
   const total=await env.DB.prepare("SELECT COUNT(*) AS n FROM questions WHERE quiz_id=?").bind(quizId).first<{n:number}>();
-  if(!q){
-    await env.DB.prepare("UPDATE sessions SET completed=1 WHERE id=?").bind(s.id).run();
-    return say(env,chat,`🎉 Викторина завершена! Твой результат: ${s.score} баллов.\n/leaderboard — общий рейтинг.`);
+  let body:string;
+  if(!q){ await env.DB.prepare("UPDATE sessions SET completed=1 WHERE id=?").bind(s.id).run(); body="🎉 <b>Викторина завершена!</b>\nТвой результат: "+s.score+" баллов.\n/leaderboard — общий рейтинг."; }
+  else {
+    body=(feedback?feedback+"\n\n":"")+"🎬 <b>Вопрос "+(s.question_pos+1)+" из "+(total?.n||0)+"</b>\n"+esc(q.prompt)+"\n\nУ тебя 3 попытки.";
+    if(quiz?.answer_mode==="choice"){
+      const options=JSON.parse(q.options||"[]") as string[];
+      body+="\nВыбери один вариант:";
+      const reply_markup={inline_keyboard:options.map((v,i)=>[{text:v,callback_data:"a:"+quizId+":"+q.id+":"+i}])};
+      if(s.game_message_id) await tg(env,"editMessageText",{chat_id:chat,message_id:s.game_message_id,text:body,parse_mode:"HTML",reply_markup});
+      else { const sent=await say(env,chat,body,{reply_markup}) as {message_id:number}; await env.DB.prepare("UPDATE sessions SET game_message_id=? WHERE id=?").bind(sent.message_id,s.id).run(); }
+      return;
+    }
+    body+="\nНапиши свой ответ сообщением.";
   }
-  return say(env,chat,`🎬 <b>Вопрос ${s.question_pos+1} из ${total?.n||0}</b>\n${esc(q.prompt)}\n\nУ тебя 3 попытки. Напиши название фильма.`);
+  if(s.game_message_id) await editGame(env,chat,s.game_message_id,body);
+  else { const sent=await say(env,chat,body) as {message_id:number}; await env.DB.prepare("UPDATE sessions SET game_message_id=? WHERE id=?").bind(sent.message_id,s.id).run(); }
 }
 async function beginQuiz(env:Env,m:TgMessage,quizId:number){
   const uid=m.from!.id,chat=m.chat.id;
@@ -130,49 +155,38 @@ async function beginQuiz(env:Env,m:TgMessage,quizId:number){
 }
 async function participantMessage(env:Env,m:TgMessage){
   const uid=m.from!.id,chat=m.chat.id,text=(m.text||"").trim();
-  if(text.startsWith("/start")){
-    const payload=text.split(/\s+/,2)[1]||"";
-    const match=payload.match(/^quiz_(\d+)$/);
-    if(match)return beginQuiz(env,m,Number(match[1]));
-    return say(env,chat,"Привет! Я бот кино-викторин. Открой кнопку под постом с викториной, чтобы начать игру.\n\n/leaderboard — рейтинг\n/privacy — скрыть имя в рейтинге.");
-  }
-  if(text==="/privacy"){
-    const u=await env.DB.prepare("SELECT private FROM users WHERE id=?").bind(uid).first<{private:number}>();
-    if(!u)return say(env,chat,"Сначала отправь /start.");
-    const next=u.private?0:1;
-    await env.DB.prepare("UPDATE users SET private=? WHERE id=?").bind(next,uid).run();
-    return say(env,chat,next?"Твоё имя скрыто в рейтинге.":"Твоё имя снова отображается в рейтинге.");
-  }
-  if(text==="/leaderboard"){
-    const r=await env.DB.prepare("SELECT u.full_name,SUM(s.score) score FROM sessions s JOIN users u ON u.id=s.user_id WHERE s.completed=1 AND u.private=0 GROUP BY u.id ORDER BY score DESC,u.full_name LIMIT 20").all<{full_name:string;score:number}>();
-    if(!r.results.length)return say(env,chat,"Рейтинг пока пуст. Стань первым участником!");
-    return say(env,chat,"🏆 <b>Рейтинг кино-викторины</b>\n"+r.results.map((x,i)=>`${i+1}. ${esc(x.full_name)} — ${x.score} баллов`).join("\n"));
-  }
+  if(text.startsWith("/start")){ const payload=text.split(/\s+/,2)[1]||""; const match=payload.match(/^quiz_(\d+)$/); if(match)return beginQuiz(env,m,Number(match[1])); return say(env,chat,"Привет! Открой кнопку под постом с викториной, чтобы начать игру.\n/leaderboard — рейтинг\n/privacy — скрыть имя в рейтинге."); }
+  if(text==="/privacy"){ const u=await env.DB.prepare("SELECT private FROM users WHERE id=?").bind(uid).first<{private:number}>(); if(!u)return say(env,chat,"Сначала отправь /start."); const next=u.private?0:1; await env.DB.prepare("UPDATE users SET private=? WHERE id=?").bind(next,uid).run(); return say(env,chat,next?"Твоё имя скрыто в рейтинге.":"Твоё имя снова отображается в рейтинге."); }
+  if(text==="/leaderboard"){ const r=await env.DB.prepare("SELECT u.full_name,SUM(s.score) score FROM sessions s JOIN users u ON u.id=s.user_id WHERE s.completed=1 AND u.private=0 GROUP BY u.id ORDER BY score DESC,u.full_name LIMIT 20").all<{full_name:string;score:number}>(); if(!r.results.length)return say(env,chat,"Рейтинг пока пуст. Стань первым участником!"); return say(env,chat,"🏆 <b>Рейтинг кино-викторины</b>\n"+r.results.map((x,i)=>(i+1)+". "+esc(x.full_name)+" — "+x.score+" баллов").join("\n")); }
   if(!text||text.startsWith("/"))return;
   const s=await env.DB.prepare("SELECT s.*,q.id AS question_id,q.answer FROM sessions s JOIN questions q ON q.quiz_id=s.quiz_id AND q.position=s.question_pos WHERE s.user_id=? AND s.completed=0 ORDER BY s.started_at DESC LIMIT 1").bind(uid).first<any>();
   if(!s)return;
-  if(Date.parse(s.expires_at)<=Date.now()){
-    return say(env,chat,"Время игровой сессии истекло. Твой прогресс сохранён. Открой кнопку участия в посте викторины, чтобы продолжить.");
-  }
+  if(Date.parse(s.expires_at)<=Date.now())return say(env,chat,"Время игровой сессии истекло. Прогресс сохранён. Открой кнопку участия в посте, чтобы продолжить.");
+  try { await tg(env,"deleteMessage",{chat_id:chat,message_id:m.message_id}); } catch {}
   const aliases=await env.DB.prepare("SELECT alias FROM aliases WHERE question_id=?").bind(s.question_id).all<{alias:string}>();
-  const accepted=[s.answer,...aliases.results.map(x=>x.alias)];
-  const attempt=s.attempts+1,correct=accepted.some(x=>norm(x)===norm(text));
-  await env.DB.prepare("INSERT INTO answers(session_id,question_id,attempt,answer,correct,created_at) VALUES(?,?,?,?,?,?)").bind(s.id,s.question_id,attempt,text,correct?1:0,isoNow()).run();
-  if(correct){
-    const score=s.score+POINTS[attempt];
-    await env.DB.prepare("UPDATE sessions SET score=?,question_pos=question_pos+1,attempts=0 WHERE id=?").bind(score,s.id).run();
-    await say(env,chat,`✅ Верно! +${POINTS[attempt]} баллов. Всего: ${score}.`);
-    return sendQuestion(env,chat,uid,s.quiz_id);
-  }
-  if(attempt>=3){
-    await env.DB.prepare("UPDATE sessions SET question_pos=question_pos+1,attempts=0 WHERE id=?").bind(s.id).run();
-    await say(env,chat,`❌ Попытки закончились. Правильный ответ: <b>${esc(s.answer)}</b>.`);
-    return sendQuestion(env,chat,uid,s.quiz_id);
-  }
+  const accepted=[s.answer,...aliases.results.map(x=>x.alias)]; const attempt=s.attempts+1,correct=accepted.some(x=>norm(x)===norm(text));
+  if(correct){ const score=s.score+POINTS[attempt]; await env.DB.prepare("UPDATE sessions SET score=?,question_pos=question_pos+1,attempts=0 WHERE id=?").bind(score,s.id).run(); return sendQuestion(env,chat,uid,s.quiz_id,"✅ Верно! +"+POINTS[attempt]+" баллов. Всего: "+score+"."); }
+  if(attempt>=3){ await env.DB.prepare("UPDATE sessions SET question_pos=question_pos+1,attempts=0 WHERE id=?").bind(s.id).run(); return sendQuestion(env,chat,uid,s.quiz_id,"❌ Попытки закончились. Правильный ответ: <b>"+esc(s.answer)+"</b>."); }
   await env.DB.prepare("UPDATE sessions SET attempts=? WHERE id=?").bind(attempt,s.id).run();
-  return say(env,chat,`❌ Не угадал. Осталось попыток: ${3-attempt}. Попробуй ещё раз.`);
+  return sendQuestion(env,chat,uid,s.quiz_id,"❌ Не угадал. Осталось попыток: "+(3-attempt)+".");
 }
 async function handleUpdate(env:Env,u:Update){
+  if(u.callback_query){
+    const c=u.callback_query, data=c.data||"", match=data.match(/^a:(\d+):(\d+):(\d+)$/);
+    if(!match||!c.message||c.message.chat.type!=="private") { await tg(env,"answerCallbackQuery",{callback_query_id:c.id,text:"Кнопка устарела. Открой викторину заново."}); return; }
+    const quizId=Number(match[1]), questionId=Number(match[2]), index=Number(match[3]);
+    const session=await env.DB.prepare("SELECT question_pos,quiz_id,completed FROM sessions WHERE user_id=? AND quiz_id=?").bind(c.from.id,quizId).first<any>();
+    const current=await env.DB.prepare("SELECT id,options FROM questions WHERE quiz_id=? ORDER BY position LIMIT 1 OFFSET ?").bind(quizId,session?.question_pos||0).first<any>();
+    if(!session||session.completed||!current||questionId!==current.id){
+      await tg(env,"answerCallbackQuery",{callback_query_id:c.id,text:"Этот вопрос уже завершён."}); return;
+    }
+    const options=JSON.parse(current.options||"[]") as string[], chosen=options[index];
+    if(!chosen){await tg(env,"answerCallbackQuery",{callback_query_id:c.id,text:"Вариант не найден."});return;}
+    await tg(env,"answerCallbackQuery",{callback_query_id:c.id});
+    await userUpsert(env,c.from);
+    const fake:TgMessage={message_id:0,text:chosen,from:c.from,chat:c.message.chat};
+    return participantMessage(env,fake);
+  }
   const m=u.message;
   if(!m?.from||!m.text||m.chat.type!=="private")return;
   await userUpsert(env,m.from);
