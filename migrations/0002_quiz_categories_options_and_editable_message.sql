@@ -1,3 +1,0 @@
-ALTER TABLE quizzes ADD COLUMN category TEXT NOT NULL DEFAULT 'Фильм';
-ALTER TABLE questions ADD COLUMN options TEXT NOT NULL DEFAULT '[]';
-ALTER TABLE sessions ADD COLUMN game_message_id INTEGER;
