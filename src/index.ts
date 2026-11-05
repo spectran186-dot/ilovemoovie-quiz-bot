@@ -16,6 +16,7 @@ export interface Env {
   BOT_USERNAME: string;
   QUIZ_HOURS?: string;
   SESSION_MINUTES?: string;
+  WEBHOOK_URL?: string;
 }
 type TgUser = { id:number; username?:string; first_name?:string; last_name?:string };
 type TgMessage = { message_id:number; text?:string; from?:TgUser; chat:{id:number;type:string} };
@@ -69,6 +70,11 @@ async function adminMessage(env:Env,m:TgMessage){
   const [cmd,...args]=text.split(/\s+/);
   // Always route participant commands outside the admin draft wizard.
   if(cmd==="/start"||cmd==="/privacy"||cmd==="/leaderboard") return participantMessage(env,m);
+  if(cmd==="/refreshwebhook"){
+    if(!env.WEBHOOK_URL) return say(env,chat,"Не задан WEBHOOK_URL в настройках Worker.");
+    await tg(env,"setWebhook",{url:env.WEBHOOK_URL,secret_token:env.WEBHOOK_SECRET,allowed_updates:["message","callback_query"],max_connections:40});
+    return say(env,chat,"Webhook обновлён: теперь принимаются сообщения и нажатия inline-кнопок.");
+  }
   if(cmd==="/cancel"){await putDraft(env,uid,null);return say(env,chat,"Создание викторины отменено.");}
   if(cmd==="/newquiz"){await putDraft(env,uid,{stage:"title",questions:[]});return say(env,chat,"Создание викторины. Отправь её название.");}
   if(cmd==="/quizlist"){
@@ -89,7 +95,7 @@ async function adminMessage(env:Env,m:TgMessage){
     return say(env,chat,`Викторина #${id} опубликована в канале.`);
   }
   const d=await getDraft(env,uid);
-  if(!d) return say(env,chat,"Команды администратора: /newquiz, /quizlist, /publish ID, /cancel.");
+  if(!d) return say(env,chat,"Команды администратора: /newquiz, /quizlist, /publish ID, /refreshwebhook, /cancel.");
   if(d.stage==="title"){if(!text)return say(env,chat,"Название не должно быть пустым.");d.title=text;d.stage="mode";}
   else if(d.stage==="mode"){if(text!=="1"&&text!=="2")return say(env,chat,"Выбери 1 — варианты ответа или 2 — свободный ввод.");d.mode=text==="1"?"choice":"text";d.stage="category";}
   else if(d.stage==="category"){d.category=text;d.stage="prompt";}
