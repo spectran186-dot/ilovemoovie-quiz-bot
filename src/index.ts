@@ -110,6 +110,8 @@ async function adminMessage(env:Env,m:TgMessage){
     return say(env,chat,`Викторина #${id} опубликована в канале.`);
   }
   const d=await getDraft(env,uid);
+  // Admins can also play: route ordinary text to an active quiz when no quiz draft is being edited.
+  if(!d && !text.startsWith("/")) return participantMessage(env,m);
   if(!d) return say(env,chat,"Команды администратора: /newquiz, /quizlist, /publish ID, /refreshwebhook, /cancel.");
   if(d.stage==="title"){if(!text)return say(env,chat,"Название не должно быть пустым.");d.title=text;d.stage="mode";}
   else if(d.stage==="mode"){if(text!=="1"&&text!=="2")return say(env,chat,"Выбери 1 — варианты ответа или 2 — свободный ввод.");d.mode=text==="1"?"choice":"text";d.stage="category";}
