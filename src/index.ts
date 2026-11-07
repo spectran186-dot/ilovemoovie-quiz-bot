@@ -163,7 +163,8 @@ async function sendQuestion(env:Env,chat:number,userId:number,quizId:number,feed
   let body:string;
   if(!q){ await env.DB.prepare("UPDATE sessions SET completed=1 WHERE id=?").bind(s.id).run(); body="🎉 <b>Викторина завершена!</b>\nТвой результат: "+s.score+" баллов.\n/leaderboard — общий рейтинг."; }
   else {
-    if(q.media_type&&q.media_file_id){const method=q.media_type==="photo"?"sendPhoto":q.media_type==="video"?"sendVideo":"sendAudio";const mediaKey=q.media_type==="photo"?"photo":q.media_type==="video"?"video":"audio";await tg(env,method,{chat_id:chat,[mediaKey]:q.media_file_id,caption:esc(q.prompt).slice(0,900)});}\n    body="🎬 <b>Вопрос "+(s.question_pos+1)+" из "+(total?.n||0)+"</b>\n"+esc(q.prompt)+"\n\nУ тебя 3 попытки.";
+    if(q.media_type&&q.media_file_id){const method=q.media_type==="photo"?"sendPhoto":q.media_type==="video"?"sendVideo":"sendAudio";const mediaKey=q.media_type==="photo"?"photo":q.media_type==="video"?"video":"audio";await tg(env,method,{chat_id:chat,[mediaKey]:q.media_file_id,caption:esc(q.prompt).slice(0,900)});}
+    body="🎬 <b>Вопрос "+(s.question_pos+1)+" из "+(total?.n||0)+"</b>\n"+esc(q.prompt)+"\n\nУ тебя 3 попытки.";
     if(quiz?.answer_mode==="choice"){
       const options=JSON.parse(q.options||"[]") as string[];
       body+="\nВыбери один вариант:";
