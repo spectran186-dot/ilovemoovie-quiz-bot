@@ -110,8 +110,11 @@ async function adminMessage(env:Env,m:TgMessage){
     if(!env.CHANNEL_ID||!env.BOT_USERNAME) return say(env,chat,"Не настроены CHANNEL_ID или BOT_USERNAME в Cloudflare.");
     const hours=Number(env.QUIZ_HOURS||48), end=new Date(Date.now()+hours*3600000).toISOString();
     const sent=await tg(env,"sendMessage",{chat_id:env.CHANNEL_ID,parse_mode:"HTML",text:`🎬 <b>${esc(q.title)}</b>\n\nНовая кино-викторина!\nВнутри ${count.n} вопросов. На каждый — три попытки. Викторина доступна ${hours} часов.`,reply_markup:{inline_keyboard:[[{text:"🎬 Участвовать в викторине",url:`https://t.me/${env.BOT_USERNAME}?start=quiz_${id}`}]]}}) as {message_id:number};
+    // A republish starts a completely fresh round for every participant.
+    // Keep the quiz/questions/answers, but remove all old sessions and scores.
+    await env.DB.prepare("DELETE FROM sessions WHERE quiz_id=?").bind(id).run();
     await env.DB.prepare("UPDATE quizzes SET status='published',published_at=?,ends_at=?,channel_message_id=? WHERE id=?").bind(isoNow(),end,sent.message_id,id).run();
-    return say(env,chat,`Викторина #${id} опубликована в канале.`);
+    return say(env,chat,`Викторина #${id} опубликована заново. Прогресс и результаты игроков сброшены — все могут начать сначала.`);
   }
   const d=await getDraft(env,uid);
   // Admins can also play: route ordinary text to an active quiz when no quiz draft is being edited.
