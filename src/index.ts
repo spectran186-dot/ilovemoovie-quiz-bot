@@ -100,6 +100,13 @@ async function adminMessage(env:Env,m:TgMessage){
     const r=await env.DB.prepare("SELECT id,title,status FROM quizzes ORDER BY id DESC LIMIT 20").all<{id:number;title:string;status:string}>();
     return say(env,chat,r.results.length?r.results.map(q=>`#${q.id} — ${esc(q.title)} [${q.status}]`).join("\n"):"Викторин пока нет.");
   }
+  if(cmd==="/delete"){
+    const id=Number(args[0]);
+    if(!Number.isInteger(id)||id<1) return say(env,chat,"Формат: /delete ID");
+    const q=await env.DB.prepare("SELECT id,title FROM quizzes WHERE id=?").bind(id).first<{id:number;title:string}>();
+    if(!q) return say(env,chat,"Викторина не найдена.");
+    return say(env,chat,`Удалить викторину #${id} «${esc(q.title)}»? Будут удалены вопросы, ответы и результаты всех игроков. Это действие необратимо.`,{reply_markup:{inline_keyboard:[[{text:"🗑 Да, удалить",callback_data:"delconfirm:"+id},{text:"Отмена",callback_data:"delcancel"}]]}});
+  }
   if(cmd==="/publish"){
     const id=Number(args[0]);
     if(!Number.isInteger(id)||id<1) return say(env,chat,"Формат: /publish ID");
@@ -119,7 +126,7 @@ async function adminMessage(env:Env,m:TgMessage){
   const d=await getDraft(env,uid);
   // Admins can also play: route ordinary text to an active quiz when no quiz draft is being edited.
   if(!d && !text.startsWith("/")) return participantMessage(env,m);
-  if(!d) return say(env,chat,"Команды администратора: /newquiz, /quizlist, /publish ID, /refreshwebhook, /cancel.");
+  if(!d) return say(env,chat,"Команды администратора: /newquiz, /quizlist, /publish ID, /delete ID, /refreshwebhook, /cancel.");
   if(d.stage==="title"){if(!text)return say(env,chat,"Название не должно быть пустым.");d.title=text;d.stage="mode";}
   else if(d.stage==="mode"){if(text!=="1"&&text!=="2")return say(env,chat,"Выбери 1 — варианты ответа или 2 — свободный ввод.");d.mode=text==="1"?"choice":"text";d.stage="category";}
   else if(d.stage==="category"){d.category=text;d.stage="prompt";}
@@ -193,7 +200,29 @@ async function participantMessage(env:Env,m:TgMessage){
 }
 async function handleUpdate(env:Env,u:Update){
   if(u.callback_query){
-    const c=u.callback_query, data=c.data||"", match=data.match(/^a:(\d+):(\d+):(\d+)$/);
+    const c=u.callback_query, data=c.data||"";
+    if(data==="delcancel"){
+      if(!admin(env,c.from.id)){await tg(env,"answerCallbackQuery",{callback_query_id:c.id,text:"Нет доступа."});return;}
+      await tg(env,"answerCallbackQuery",{callback_query_id:c.id,text:"Удаление отменено."});
+      if(c.message) return tg(env,"editMessageText",{chat_id:c.message.chat.id,message_id:c.message.message_id,text:"Удаление викторины отменено."});
+      return;
+    }
+    const del=data.match(/^delconfirm:(\d+)$/);
+    if(del){
+      if(!admin(env,c.from.id)){await tg(env,"answerCallbackQuery",{callback_query_id:c.id,text:"Нет доступа."});return;}
+      const id=Number(del[1]);
+      const q=await env.DB.prepare("SELECT id,title,channel_message_id FROM quizzes WHERE id=?").bind(id).first<{id:number;title:string;channel_message_id:number|null}>();
+      if(!q){await tg(env,"answerCallbackQuery",{callback_query_id:c.id,text:"Викторина уже удалена."});return;}
+      await env.DB.prepare("DELETE FROM answers WHERE session_id IN (SELECT id FROM sessions WHERE quiz_id=?)").bind(id).run();
+      await env.DB.prepare("DELETE FROM sessions WHERE quiz_id=?").bind(id).run();
+      await env.DB.prepare("DELETE FROM questions WHERE quiz_id=?").bind(id).run();
+      await env.DB.prepare("DELETE FROM quizzes WHERE id=?").bind(id).run();
+      if(q.channel_message_id&&env.CHANNEL_ID){try{await tg(env,"deleteMessage",{chat_id:env.CHANNEL_ID,message_id:q.channel_message_id});}catch(e){console.error("Could not remove quiz post",e);}}
+      await tg(env,"answerCallbackQuery",{callback_query_id:c.id,text:"Викторина удалена."});
+      if(c.message) return tg(env,"editMessageText",{chat_id:c.message.chat.id,message_id:c.message.message_id,text:\`🗑 Викторина #\${id} «\${esc(q.title)}» удалена вместе с игровыми данными.\`});
+      return;
+    }
+    const match=data.match(/^a:(\d+):(\d+):(\d+)$/);
     if(!match||!c.message||c.message.chat.type!=="private") { await tg(env,"answerCallbackQuery",{callback_query_id:c.id,text:"Кнопка устарела. Открой викторину заново."}); return; }
     const quizId=Number(match[1]), questionId=Number(match[2]), index=Number(match[3]);
     const session=await env.DB.prepare("SELECT question_pos,quiz_id,completed FROM sessions WHERE user_id=? AND quiz_id=?").bind(c.from.id,quizId).first<any>();
