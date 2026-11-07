@@ -18,10 +18,10 @@ export interface Env {
   WEBHOOK_URL?: string;
 }
 type TgUser = { id:number; username?:string; first_name?:string; last_name?:string };
-type TgMessage = { message_id:number; text?:string; from?:TgUser; chat:{id:number;type:string} };
+type TgMessage = { message_id:number; text?:string; caption?:string; photo?:Array<{file_id:string}>; video?:{file_id:string}; audio?:{file_id:string}; voice?:{file_id:string}; from?:TgUser; chat:{id:number;type:string} };
 type TgCallback = { id:string; from:TgUser; data?:string; message?:TgMessage };
 type Update = { update_id:number; message?:TgMessage; callback_query?:TgCallback };
-type Draft = { stage:string; title?:string; mode?:"text"|"choice"; category?:string; questions:Array<{prompt:string;answer:string;aliases:string[];options:string[]}>; prompt?:string; answer?:string; options?:string[] };
+type Draft = { stage:string; title?:string; mode?:"text"|"choice"; questions:Array<{prompt:string;answer:string;aliases:string[];options:string[];media_type?:string|null;media_file_id?:string|null}>; prompt?:string; answer?:string; options?:string[]; media_type?:string|null; media_file_id?:string|null };
 const POINTS:Record<number,number>={1:10,2:7,3:4};
 const isoNow=()=>new Date().toISOString();
 const norm=(s:string)=>s.toLocaleLowerCase("ru-RU").replace(/ё/g,"е").normalize("NFKC").replace(/[^\p{L}\p{N}\s]/gu," ").trim().replace(/\s+/g," ");
@@ -68,11 +68,11 @@ async function putDraft(env:Env,id:number,d:Draft|null){
   else await env.DB.prepare("DELETE FROM admin_drafts WHERE admin_id=?").bind(id).run();
 }
 async function saveQuiz(env:Env,id:number,d:Draft){
-  const result=await env.DB.prepare("INSERT INTO quizzes(title,status,created_at,answer_mode,category) VALUES(?,'draft',?,?,?)").bind(d.title||"",isoNow(),d.mode||"text",d.category||"Фильм").run();
+  const result=await env.DB.prepare("INSERT INTO quizzes(title,status,created_at,answer_mode) VALUES(?,'draft',?,?)").bind(d.title||"",isoNow(),d.mode||"text").run();
   const quizId=Number(result.meta.last_row_id);
   for(let i=0;i<d.questions.length;i++){
     const q=d.questions[i];
-    const qr=await env.DB.prepare("INSERT INTO questions(quiz_id,position,prompt,answer,options) VALUES(?,?,?,?,?)").bind(quizId,i+1,q.prompt,q.answer,JSON.stringify(q.options||[])).run();
+    const qr=await env.DB.prepare("INSERT INTO questions(quiz_id,position,prompt,answer,options,media_type,media_file_id) VALUES(?,?,?,?,?,?,?)").bind(quizId,i+1,q.prompt,q.answer,JSON.stringify(q.options||[]),q.media_type||null,q.media_file_id||null).run();
     const qid=Number(qr.meta.last_row_id);
     for(const a of q.aliases) await env.DB.prepare("INSERT INTO aliases(question_id,alias) VALUES(?,?)").bind(qid,a).run();
   }
@@ -103,7 +103,7 @@ async function adminMessage(env:Env,m:TgMessage){
   }
   if(cmd==="/admin") return adminPanel(env,chat);
   if(cmd==="/cancel"){await putDraft(env,uid,null);return say(env,chat,"Создание викторины отменено.");}
-  if(cmd==="/newquiz"){await putDraft(env,uid,{stage:"title",questions:[]});return say(env,chat,"Создание викторины. Отправь её название.");}
+  if(cmd==="/newquiz"){await putDraft(env,uid,{stage:"title",questions:[]});return say(env,chat,"🎬 Отправь название викторины.",{reply_markup:{inline_keyboard:[[{text:"✖️ Отмена",callback_data:"wiz:cancel"}]]}});}
   if(cmd==="/quizlist"){
     const r=await env.DB.prepare("SELECT id,title,status FROM quizzes ORDER BY id DESC LIMIT 20").all<{id:number;title:string;status:string}>();
     return say(env,chat,r.results.length?r.results.map(q=>`#${q.id} — ${esc(q.title)} [${q.status}]`).join("\n"):"Викторин пока нет.");
@@ -136,13 +136,13 @@ async function adminMessage(env:Env,m:TgMessage){
   if(!d && !text.startsWith("/")) return participantMessage(env,m);
   if(!d) return say(env,chat,"Используй /admin для открытия панели администратора.");
   if(d.stage==="title"){if(!text)return say(env,chat,"Название не должно быть пустым.");d.title=text;d.stage="mode";}
-  else if(d.stage==="mode"){if(text!=="1"&&text!=="2")return say(env,chat,"Выбери 1 — варианты ответа или 2 — свободный ввод.");d.mode=text==="1"?"choice":"text";d.stage="category";}
-  else if(d.stage==="category"){d.category=text;d.stage="prompt";}
-  else if(d.stage==="prompt"){if(!text)return say(env,chat,"Вопрос не должен быть пустым.");d.prompt=text;d.stage=d.mode==="choice"?"options":"answer";}
+  else if(d.stage==="mode"){if(text!=="1"&&text!=="2")return say(env,chat,"Выбери режим кнопкой ниже.");d.mode=text==="1"?"choice":"text";d.stage="prompt";}
+  
+  else if(d.stage==="prompt"){const media=m.photo?.length?{type:"photo",id:m.photo[m.photo.length-1].file_id}:m.video?{type:"video",id:m.video.file_id}:m.audio?{type:"audio",id:m.audio.file_id}:m.voice?{type:"voice",id:m.voice.file_id}:null;const prompt=text||m.caption||"";if(!prompt&&!media)return say(env,chat,"Отправь текст вопроса или фото, видео либо аудио с подписью.");d.prompt=prompt||" ";d.media_type=media?.type||null;d.media_file_id=media?.id||null;d.stage=d.mode==="choice"?"options":"answer";}
   else if(d.stage==="options"){const a=text.split(/\r?\n/).map(x=>x.trim()).filter(Boolean);if(a.length<2||a.length>6)return say(env,chat,"Отправь 2–6 вариантов, каждый с новой строки.");d.options=a;d.stage="correct";}
   else if(d.stage==="correct"){const n=Number(text);if(!Number.isInteger(n)||n<1||n>(d.options||[]).length)return say(env,chat,"Отправь номер правильного варианта.");d.answer=d.options![n-1];d.stage="aliases";}
   else if(d.stage==="answer"){if(!text)return say(env,chat,"Ответ не должен быть пустым.");d.answer=text;d.options=[];d.stage="aliases";}
-  else if(d.stage==="aliases"){d.questions.push({prompt:d.prompt!,answer:d.answer!,aliases:text==="—"?[]:text.split(";").map(x=>x.trim()).filter(Boolean),options:d.options||[]});d.stage="more";}
+  else if(d.stage==="aliases"){d.questions.push({prompt:d.prompt!,answer:d.answer!,aliases:text==="—"?[]:text.split(";").map(x=>x.trim()).filter(Boolean),options:d.options||[],media_type:d.media_type||null,media_file_id:d.media_file_id||null});d.prompt=undefined;d.answer=undefined;d.options=undefined;d.media_type=null;d.media_file_id=null;d.stage="more";}
   else if(d.stage==="more"){
     if(text==="+"){d.stage="prompt";}
     else if(["готово","готово!","done"].includes(text.toLowerCase())){
@@ -151,8 +151,8 @@ async function adminMessage(env:Env,m:TgMessage){
     } else return say(env,chat,"Отправь «+» для следующего вопроса или «готово» для сохранения.");
   }
   await putDraft(env,uid,d);
-  const prompts:Record<string,string>={mode:"Режим ответа: 1 — выбор из вариантов; 2 — свободный ввод.",category:"Категория: фильм, актёр, актриса, режиссёр, персонаж, сериал, саундтрек, кадр или своя.",prompt:"Отправь текст вопроса.",options:"Отправь 2–6 вариантов, каждый с новой строки.",correct:"Отправь номер правильного варианта.",answer:"Укажи правильный ответ.",aliases:"Укажи альтернативные варианты через ; или отправь —",more:`Вопросов добавлено: ${d.questions.length}. Отправь «+» для следующего вопроса или «готово» для сохранения.`};
-  return say(env,chat,d.stage==="title"?"Отправь название викторины.":prompts[d.stage]||"Продолжим.");
+  const prompts:Record<string,string>={mode:"Выбери режим ответа кнопкой.",prompt:"Отправь текст вопроса или фото/видео/аудио с подписью.",options:"Отправь 2–6 вариантов, каждый с новой строки.",correct:"Отправь номер правильного варианта.",answer:"Укажи правильный ответ.",aliases:"Укажи альтернативные варианты через ; или отправь —",more:`Вопросов добавлено: ${d.questions.length}. Отправь «+» для следующего вопроса или «готово» для сохранения.`};
+  const kb:Record<string,any>={mode:{inline_keyboard:[[{text:"🔘 Варианты ответа",callback_data:"wiz:mode:choice"},{text:"✍️ Свой ответ",callback_data:"wiz:mode:text"}],[{text:"✖️ Отмена",callback_data:"wiz:cancel"}]]},more:{inline_keyboard:[[{text:"➕ Добавить вопрос",callback_data:"wiz:more"},{text:"💾 Сохранить квиз",callback_data:"wiz:save"}],[{text:"✖️ Отмена",callback_data:"wiz:cancel"}]]}};return say(env,chat,d.stage==="title"?"Отправь название викторины.":prompts[d.stage]||"Продолжим.",kb[d.stage]?{reply_markup:kb[d.stage]}:{});
 }
 async function sendQuestion(env:Env,chat:number,userId:number,quizId:number,feedback=""){
   const s=await env.DB.prepare("SELECT * FROM sessions WHERE user_id=? AND quiz_id=?").bind(userId,quizId).first<any>();
@@ -163,17 +163,17 @@ async function sendQuestion(env:Env,chat:number,userId:number,quizId:number,feed
   let body:string;
   if(!q){ await env.DB.prepare("UPDATE sessions SET completed=1 WHERE id=?").bind(s.id).run(); body="🎉 <b>Викторина завершена!</b>\nТвой результат: "+s.score+" баллов.\n/leaderboard — общий рейтинг."; }
   else {
-    body=(feedback?feedback+"\n\n":"")+"🎬 <b>Вопрос "+(s.question_pos+1)+" из "+(total?.n||0)+"</b>\n"+esc(q.prompt)+"\n\nУ тебя 3 попытки.";
+    body="🎬 <b>Вопрос "+(s.question_pos+1)+" из "+(total?.n||0)+"</b>\n"+esc(q.prompt)+"\n\nУ тебя 3 попытки.";
     if(quiz?.answer_mode==="choice"){
       const options=JSON.parse(q.options||"[]") as string[];
       body+="\nВыбери один вариант:";
       const reply_markup={inline_keyboard:options.map((v,i)=>[{text:v,callback_data:"a:"+quizId+":"+q.id+":"+i}])};
-      await editOrSendGame(env,chat,s.game_message_id,body,s.id,reply_markup);
+      await editOrSendGame(env,chat,s.game_message_id,body+(feedback?"\n\n"+feedback:""),s.id,reply_markup);
       return;
     }
     body+="\nНапиши свой ответ сообщением.";
   }
-  await editOrSendGame(env,chat,s.game_message_id,body,s.id);
+  await editOrSendGame(env,chat,s.game_message_id,body+(feedback?"\n\n"+feedback:""),s.id);
 }
 async function beginQuiz(env:Env,m:TgMessage,quizId:number){
   const uid=m.from!.id,chat=m.chat.id;
@@ -232,7 +232,7 @@ async function handleUpdate(env:Env,u:Update){
       if(action==="item"){
         const q=await env.DB.prepare("SELECT id,title,status FROM quizzes WHERE id=?").bind(id).first<{id:number;title:string;status:string}>();
         if(!q)return say(env,chat,"Викторина не найдена.",{reply_markup:{inline_keyboard:[[{text:"↩️ К списку",callback_data:"adm:manage"}]]}});
-        const actions=q.status==="draft"?[[{text:"📢 Опубликовать",callback_data:"adm:do_publish:"+id}]]:[];
+        const actions=[[{text:q.status==="draft"?"📢 Опубликовать":"🔄 Переопубликовать",callback_data:"adm:do_publish:"+id}]];
         actions.push([{text:"🗑 Удалить",callback_data:"adm:do_delete:"+id}]);
         actions.push([{text:"↩️ К списку",callback_data:"adm:manage"}]);
         return say(env,chat,"<b>Викторина #"+q.id+"</b>\n"+esc(q.title)+"\nСтатус: "+q.status,{reply_markup:{inline_keyboard:actions}});
