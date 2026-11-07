@@ -79,6 +79,13 @@ async function saveQuiz(env:Env,id:number,d:Draft){
   await putDraft(env,id,null);
   return quizId;
 }
+async function adminPanel(env:Env,chat:number){
+ return say(env,chat,"🛠 <b>Административная панель</b>\\nВыбери раздел:",{reply_markup:{inline_keyboard:[
+ [{text:"➕ Создать квиз",callback_data:"adm:new"},{text:"📋 Список квизов",callback_data:"adm:list"}],
+ [{text:"🏆 Общий рейтинг",callback_data:"adm:overall"},{text:"📊 Рейтинг по квизам",callback_data:"adm:perquiz"}],
+ [{text:"⚙️ Управление квизами",callback_data:"adm:manage"}]
+ ]}});
+}
 async function adminMessage(env:Env,m:TgMessage){
   const uid=m.from!.id, text=(m.text||"").trim(), chat=m.chat.id;
   const [cmd,...args]=text.split(/\s+/);
@@ -94,6 +101,7 @@ async function adminMessage(env:Env,m:TgMessage){
       return say(env,chat,"Не удалось обновить webhook: "+esc(String(e).slice(0,180)));
     }
   }
+  if(cmd==="/admin") return adminPanel(env,chat);
   if(cmd==="/cancel"){await putDraft(env,uid,null);return say(env,chat,"Создание викторины отменено.");}
   if(cmd==="/newquiz"){await putDraft(env,uid,{stage:"title",questions:[]});return say(env,chat,"Создание викторины. Отправь её название.");}
   if(cmd==="/quizlist"){
@@ -126,7 +134,7 @@ async function adminMessage(env:Env,m:TgMessage){
   const d=await getDraft(env,uid);
   // Admins can also play: route ordinary text to an active quiz when no quiz draft is being edited.
   if(!d && !text.startsWith("/")) return participantMessage(env,m);
-  if(!d) return say(env,chat,"Команды администратора: /newquiz, /quizlist, /publish ID, /delete ID, /refreshwebhook, /cancel.");
+  if(!d) return say(env,chat,"Используй /admin для открытия панели администратора.");
   if(d.stage==="title"){if(!text)return say(env,chat,"Название не должно быть пустым.");d.title=text;d.stage="mode";}
   else if(d.stage==="mode"){if(text!=="1"&&text!=="2")return say(env,chat,"Выбери 1 — варианты ответа или 2 — свободный ввод.");d.mode=text==="1"?"choice":"text";d.stage="category";}
   else if(d.stage==="category"){d.category=text;d.stage="prompt";}
@@ -201,6 +209,21 @@ async function participantMessage(env:Env,m:TgMessage){
 async function handleUpdate(env:Env,u:Update){
   if(u.callback_query){
     const c=u.callback_query, data=c.data||"";
+    if(data.startsWith("adm:")){
+      if(!admin(env,c.from.id)){await tg(env,"answerCallbackQuery",{callback_query_id:c.id,text:"Нет доступа."});return;}
+      const action=data.split(":")[1], chat=c.message?.chat.id||c.from.id;
+      await tg(env,"answerCallbackQuery",{callback_query_id:c.id});
+      if(action==="home") return adminPanel(env,chat);
+      if(action==="new"){await putDraft(env,c.from.id,{stage:"title",questions:[]});return say(env,chat,"Отправь название новой викторины.");}
+      if(action==="list") return adminMessage(env,{message_id:0,text:"/quizlist",from:c.from,chat:{id:chat,type:"private"}});
+      if(action==="overall"||action==="perquiz"){
+        const sql=action==="overall"?"SELECT u.full_name,SUM(s.score) score FROM sessions s JOIN users u ON u.id=s.user_id WHERE s.completed=1 AND u.private=0 GROUP BY u.id ORDER BY score DESC LIMIT 20":"SELECT q.title,COUNT(s.id) players,COALESCE(SUM(s.score),0) points FROM quizzes q LEFT JOIN sessions s ON s.quiz_id=q.id AND s.completed=1 GROUP BY q.id ORDER BY q.id DESC LIMIT 20";
+        const r=await env.DB.prepare(sql).all<any>();
+        const out=action==="overall"?r.results.map((x:any,i:number)=>(i+1)+". "+esc(x.full_name)+" — "+x.score).join("\\n"):r.results.map((x:any)=>esc(x.title)+" — "+x.players+" участников, "+x.points+" баллов").join("\\n");
+        return say(env,chat,(action==="overall"?"🏆 <b>Общий рейтинг</b>":"📊 <b>Рейтинг по викторинам</b>")+"\\n"+(out||"Данных пока нет."),{reply_markup:{inline_keyboard:[[{text:"↩️ В меню",callback_data:"adm:home"}]]}});
+      }
+      if(action==="manage") return adminMessage(env,{message_id:0,text:"/quizlist",from:c.from,chat:{id:chat,type:"private"}});
+    }
     if(data==="delcancel"){
       if(!admin(env,c.from.id)){await tg(env,"answerCallbackQuery",{callback_query_id:c.id,text:"Нет доступа."});return;}
       await tg(env,"answerCallbackQuery",{callback_query_id:c.id,text:"Удаление отменено."});
