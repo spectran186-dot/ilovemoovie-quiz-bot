@@ -15,7 +15,6 @@ export interface Env {
   CHANNEL_ID: string;
   BOT_USERNAME: string;
   QUIZ_HOURS?: string;
-  SESSION_MINUTES?: string;
   WEBHOOK_URL?: string;
 }
 type TgUser = { id:number; username?:string; first_name?:string; last_name?:string };
@@ -87,8 +86,13 @@ async function adminMessage(env:Env,m:TgMessage){
   if(cmd==="/start"||cmd==="/privacy"||cmd==="/leaderboard") return participantMessage(env,m);
   if(cmd==="/refreshwebhook"){
     if(!env.WEBHOOK_URL) return say(env,chat,"Не задан WEBHOOK_URL в настройках Worker.");
-    await tg(env,"setWebhook",{url:env.WEBHOOK_URL,secret_token:env.WEBHOOK_SECRET,allowed_updates:["message","callback_query"],max_connections:40});
-    return say(env,chat,"Webhook обновлён: теперь принимаются сообщения и нажатия inline-кнопок.");
+    try {
+      const result=await tg(env,"setWebhook",{url:env.WEBHOOK_URL,secret_token:env.WEBHOOK_SECRET,allowed_updates:["message","callback_query"],max_connections:40});
+      return say(env,chat,result===true?"Webhook обновлён: сообщения и нажатия кнопок принимаются.":"Telegram не подтвердил обновление webhook.");
+    } catch(e) {
+      console.error("setWebhook failed",e);
+      return say(env,chat,"Не удалось обновить webhook: "+esc(String(e).replace(/https?:\\/\\/[^\\s]+/g,"[адрес скрыт]")));
+    }
   }
   if(cmd==="/cancel"){await putDraft(env,uid,null);return say(env,chat,"Создание викторины отменено.");}
   if(cmd==="/newquiz"){await putDraft(env,uid,{stage:"title",questions:[]});return say(env,chat,"Создание викторины. Отправь её название.");}
@@ -99,8 +103,8 @@ async function adminMessage(env:Env,m:TgMessage){
   if(cmd==="/publish"){
     const id=Number(args[0]);
     if(!Number.isInteger(id)||id<1) return say(env,chat,"Формат: /publish ID");
-    const q=await env.DB.prepare("SELECT id,title FROM quizzes WHERE id=? AND status='draft'").bind(id).first<{id:number;title:string}>();
-    if(!q) return say(env,chat,"Черновик не найден или уже опубликован.");
+    const q=await env.DB.prepare("SELECT id,title FROM quizzes WHERE id=? AND status IN ('draft','published')").bind(id).first<{id:number;title:string}>();
+    if(!q) return say(env,chat,"Викторина не найдена или недоступна для публикации.");
     const count=await env.DB.prepare("SELECT COUNT(*) AS n FROM questions WHERE quiz_id=?").bind(id).first<{n:number}>();
     if(!count?.n) return say(env,chat,"В черновике нет вопросов.");
     if(!env.CHANNEL_ID||!env.BOT_USERNAME) return say(env,chat,"Не настроены CHANNEL_ID или BOT_USERNAME в Cloudflare.");
@@ -160,7 +164,7 @@ async function beginQuiz(env:Env,m:TgMessage,quizId:number){
   if(!quiz.ends_at||Date.parse(quiz.ends_at)<=Date.now())return say(env,chat,"Время этой викторины уже закончилось.");
   let s=await env.DB.prepare("SELECT * FROM sessions WHERE user_id=? AND quiz_id=?").bind(uid,quizId).first<any>();
   if(s?.completed)return say(env,chat,`Ты уже завершил эту викторину. Результат: ${s.score} баллов.`);
-  const expiry=new Date(Date.now()+Number(env.SESSION_MINUTES||20)*60000).toISOString();
+  const expiry="2099-12-31T23:59:59.999Z";
   if(!s){
     await env.DB.prepare("INSERT INTO sessions(user_id,quiz_id,question_pos,attempts,score,started_at,expires_at,completed) VALUES(?,?,0,0,0,?,?,0)").bind(uid,quizId,isoNow(),expiry).run();
   }else{
@@ -176,7 +180,6 @@ async function participantMessage(env:Env,m:TgMessage){
   if(!text||text.startsWith("/"))return;
   const s=await env.DB.prepare("SELECT s.*,q.id AS question_id,q.answer FROM sessions s JOIN questions q ON q.id=(SELECT id FROM questions WHERE quiz_id=s.quiz_id ORDER BY position LIMIT 1 OFFSET s.question_pos) WHERE s.user_id=? AND s.completed=0 ORDER BY s.started_at DESC LIMIT 1").bind(uid).first<any>();
   if(!s)return;
-  if(Date.parse(s.expires_at)<=Date.now())return say(env,chat,"Время игровой сессии истекло. Прогресс сохранён. Открой кнопку участия в посте, чтобы продолжить.");
   try { await tg(env,"deleteMessage",{chat_id:chat,message_id:m.message_id}); } catch {}
   const aliases=await env.DB.prepare("SELECT alias FROM aliases WHERE question_id=?").bind(s.question_id).all<{alias:string}>();
   const accepted=[s.answer,...aliases.results.map(x=>x.alias)]; const attempt=s.attempts+1,correct=accepted.some(x=>norm(x)===norm(text));
