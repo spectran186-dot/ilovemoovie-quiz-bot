@@ -82,7 +82,7 @@ async function saveQuiz(env:Env,id:number,d:Draft){
 async function adminPanel(env:Env,chat:number){
  return say(env,chat,"🛠 <b>Административная панель</b>\\nВыбери раздел:",{reply_markup:{inline_keyboard:[
  [{text:"➕ Создать квиз",callback_data:"adm:new"},{text:"📋 Список квизов",callback_data:"adm:list"}],
- [{text:"🏆 Общий рейтинг",callback_data:"adm:overall"},{text:"📊 Рейтинг по квизам",callback_data:"adm:perquiz"}],
+ [{text:"🏆 Рейтинги",callback_data:"adm:ratings"}],
  [{text:"⚙️ Управление квизами",callback_data:"adm:manage"}]
  ]}});
 }
@@ -211,9 +211,9 @@ async function handleUpdate(env:Env,u:Update){
     const c=u.callback_query, data=c.data||"";
     if(data.startsWith("adm:")){
       if(!admin(env,c.from.id)){await tg(env,"answerCallbackQuery",{callback_query_id:c.id,text:"Нет доступа."});return;}
-      const action=data.split(":")[1], chat=c.message?.chat.id||c.from.id;
+      const parts=data.split(":"), action=parts[1], id=Number(parts[2]), chat=c.message?.chat.id||c.from.id;
       await tg(env,"answerCallbackQuery",{callback_query_id:c.id});
-      if(action==="home") return adminPanel(env,chat);
+      if(action==="home") return adminPanel(env,chat);\n      if(action==="ratings") return say(env,chat,"🏆 <b>Рейтинги</b>\\nВыбери нужный рейтинг:",{reply_markup:{inline_keyboard:[[{text:"🏆 Общий рейтинг",callback_data:"adm:overall"},{text:"📊 По викторинам",callback_data:"adm:perquiz"}],[{text:"↩️ В меню",callback_data:"adm:home"}]]}});
       if(action==="new"){await putDraft(env,c.from.id,{stage:"title",questions:[]});return say(env,chat,"Отправь название новой викторины.");}
       if(action==="list") return adminMessage(env,{message_id:0,text:"/quizlist",from:c.from,chat:{id:chat,type:"private"}});
       if(action==="overall"||action==="perquiz"){
@@ -222,7 +222,22 @@ async function handleUpdate(env:Env,u:Update){
         const out=action==="overall"?r.results.map((x:any,i:number)=>(i+1)+". "+esc(x.full_name)+" — "+x.score).join("\\n"):r.results.map((x:any)=>esc(x.title)+" — "+x.players+" участников, "+x.points+" баллов").join("\\n");
         return say(env,chat,(action==="overall"?"🏆 <b>Общий рейтинг</b>":"📊 <b>Рейтинг по викторинам</b>")+"\\n"+(out||"Данных пока нет."),{reply_markup:{inline_keyboard:[[{text:"↩️ В меню",callback_data:"adm:home"}]]}});
       }
-      if(action==="manage") return adminMessage(env,{message_id:0,text:"/quizlist",from:c.from,chat:{id:chat,type:"private"}});
+      if(action==="manage"){
+        const r=await env.DB.prepare("SELECT id,title,status FROM quizzes ORDER BY id DESC LIMIT 20").all<{id:number;title:string;status:string}>();
+        const rows=r.results.map(q=>[{text:"#"+q.id+" "+q.title.slice(0,28),callback_data:"adm:item:"+q.id}]);
+        rows.push([{text:"↩️ В меню",callback_data:"adm:home"}]);
+        return say(env,chat,"⚙️ <b>Управление викторинами</b>\\nВыбери викторину:",{reply_markup:{inline_keyboard:rows}});
+      }
+      if(action==="item"){
+        const q=await env.DB.prepare("SELECT id,title,status FROM quizzes WHERE id=?").bind(id).first<{id:number;title:string;status:string}>();
+        if(!q)return say(env,chat,"Викторина не найдена.",{reply_markup:{inline_keyboard:[[{text:"↩️ К списку",callback_data:"adm:manage"}]]}});
+        const actions=q.status==="draft"?[[{text:"📢 Опубликовать",callback_data:"adm:do_publish:"+id}]]:[];
+        actions.push([{text:"🗑 Удалить",callback_data:"adm:do_delete:"+id}]);
+        actions.push([{text:"↩️ К списку",callback_data:"adm:manage"}]);
+        return say(env,chat,"<b>Викторина #"+q.id+"</b>\\n"+esc(q.title)+"\\nСтатус: "+q.status,{reply_markup:{inline_keyboard:actions}});
+      }
+      if(action==="do_publish") return adminMessage(env,{message_id:0,text:"/publish "+id,from:c.from,chat:{id:chat,type:"private"}});
+      if(action==="do_delete") return adminMessage(env,{message_id:0,text:"/delete "+id,from:c.from,chat:{id:chat,type:"private"}});
     }
     if(data==="delcancel"){
       if(!admin(env,c.from.id)){await tg(env,"answerCallbackQuery",{callback_query_id:c.id,text:"Нет доступа."});return;}
