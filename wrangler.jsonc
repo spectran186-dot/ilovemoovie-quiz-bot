@@ -9,7 +9,6 @@
     "CHANNEL_ID": "-1004402345621",
     "BOT_USERNAME": "Ilovemoovie_bot",
     "QUIZ_HOURS": "48",
-    "SESSION_MINUTES": "20",
     "WEBHOOK_URL": "https://ilovemoovie-quiz-bot.spectran186.workers.dev/telegram/webhook"
   },
   "d1_databases": [
