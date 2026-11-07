@@ -87,7 +87,7 @@ async function adminPanel(env:Env,chat:number){
  ]}});
 }
 async function adminMessage(env:Env,m:TgMessage){
-  const uid=m.from!.id, text=(m.text||"").trim(), chat=m.chat.id;
+  const uid=m.from!.id, text=(m.text||m.caption||"").trim(), chat=m.chat.id;
   const [cmd,...args]=text.split(/\s+/);
   // Always route participant commands outside the admin draft wizard.
   if(cmd==="/start"||cmd==="/privacy"||cmd==="/leaderboard") return participantMessage(env,m);
@@ -277,9 +277,9 @@ async function handleUpdate(env:Env,u:Update){
     return participantMessage(env,fake);
   }
   const m=u.message;
-  if(!m?.from||!m.text||m.chat.type!=="private")return;
+  if(!m?.from||m.chat.type!=="private")return;
   await userUpsert(env,m.from);
-  if(admin(env,m.from.id))return adminMessage(env,m);
+  if(admin(env,m.from.id)){const draft=await getDraft(env,m.from.id);if(draft?.stage==="prompt"&&(m.photo||m.video||m.audio||m.voice||m.caption))return adminMessage(env,m);if(!m.text)return;return adminMessage(env,m);}
   return participantMessage(env,m);
 }
 export default {
