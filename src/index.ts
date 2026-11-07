@@ -242,7 +242,7 @@ async function handleUpdate(env:Env,u:Update){
       await env.DB.prepare("DELETE FROM quizzes WHERE id=?").bind(id).run();
       if(q.channel_message_id&&env.CHANNEL_ID){try{await tg(env,"deleteMessage",{chat_id:env.CHANNEL_ID,message_id:q.channel_message_id});}catch(e){console.error("Could not remove quiz post",e);}}
       await tg(env,"answerCallbackQuery",{callback_query_id:c.id,text:"Викторина удалена."});
-      if(c.message) return tg(env,"editMessageText",{chat_id:c.message.chat.id,message_id:c.message.message_id,text:\`🗑 Викторина #\${id} «\${esc(q.title)}» удалена вместе с игровыми данными.\`});
+      if(c.message) return tg(env,"editMessageText",{chat_id:c.message.chat.id,message_id:c.message.message_id,text:`🗑 Викторина #${id} «${esc(q.title)}» удалена вместе с игровыми данными.`});
       return;
     }
     const match=data.match(/^a:(\d+):(\d+):(\d+)$/);
