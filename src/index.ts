@@ -213,7 +213,8 @@ async function handleUpdate(env:Env,u:Update){
       if(!admin(env,c.from.id)){await tg(env,"answerCallbackQuery",{callback_query_id:c.id,text:"Нет доступа."});return;}
       const parts=data.split(":"), action=parts[1], id=Number(parts[2]), chat=c.message?.chat.id||c.from.id;
       await tg(env,"answerCallbackQuery",{callback_query_id:c.id});
-      if(action==="home") return adminPanel(env,chat);\n      if(action==="ratings") return say(env,chat,"🏆 <b>Рейтинги</b>\nВыбери нужный рейтинг:",{reply_markup:{inline_keyboard:[[{text:"🏆 Общий рейтинг",callback_data:"adm:overall"},{text:"📊 По викторинам",callback_data:"adm:perquiz"}],[{text:"↩️ В меню",callback_data:"adm:home"}]]}});
+      if(action==="home") return adminPanel(env,chat);
+      if(action==="ratings") return say(env,chat,"🏆 <b>Рейтинги</b>\nВыбери нужный рейтинг:",{reply_markup:{inline_keyboard:[[{text:"🏆 Общий рейтинг",callback_data:"adm:overall"},{text:"📊 По викторинам",callback_data:"adm:perquiz"}],[{text:"↩️ В меню",callback_data:"adm:home"}]]}});
       if(action==="new"){await putDraft(env,c.from.id,{stage:"title",questions:[]});return say(env,chat,"Отправь название новой викторины.");}
       if(action==="list") return adminMessage(env,{message_id:0,text:"/quizlist",from:c.from,chat:{id:chat,type:"private"}});
       if(action==="overall"||action==="perquiz"){
