@@ -91,7 +91,7 @@ async function adminMessage(env:Env,m:TgMessage){
       return say(env,chat,result===true?"Webhook обновлён: сообщения и нажатия кнопок принимаются.":"Telegram не подтвердил обновление webhook.");
     } catch(e) {
       console.error("setWebhook failed",e);
-      return say(env,chat,"Не удалось обновить webhook: "+esc(String(e).replace(/https?:\\/\\/[^\\s]+/g,"[адрес скрыт]")));
+      return say(env,chat,"Не удалось обновить webhook: "+esc(String(e).slice(0,180)));
     }
   }
   if(cmd==="/cancel"){await putDraft(env,uid,null);return say(env,chat,"Создание викторины отменено.");}
