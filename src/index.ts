@@ -209,6 +209,7 @@ async function participantMessage(env:Env,m:TgMessage){
   if(correct){
     const score=s.score+POINTS[attempt];
     await env.DB.prepare("UPDATE sessions SET score=?,question_pos=question_pos+1,attempts=0,waiting_next=1 WHERE id=?").bind(score,s.id).run();
+    try{await tg(env,"sendDice",{chat_id:chat,emoji:"🎯"});}catch(e){console.error("Celebration animation failed",e);}
     return say(env,chat,"✨🎞️✨ <b>БЛЕСТЯЩЕ! ПРАВИЛЬНЫЙ ОТВЕТ!</b> ✨🎬✨\n\n🏆 <b>+"+POINTS[attempt]+" баллов</b>\n⭐ Всего: <b>"+score+"</b>\n\n🎉 Так держать!",{reply_markup:{inline_keyboard:[[{text:"➡️ Следующий вопрос",callback_data:"next:"+s.quiz_id}]]}});
   }
   if(attempt>=3){
