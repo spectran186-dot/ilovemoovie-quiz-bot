@@ -5,8 +5,8 @@
   "compatibility_date": "2026-11-02",
   "observability": { "enabled": true },
   "vars": {
-    "ADMIN_IDS": "323262204",
-    "CHANNEL_ID": "-1004402345621",
+    "ADMIN_IDS": "323262204,1976243250",
+    "CHANNEL_ID": "@ilovemoovie",
     "BOT_USERNAME": "Ilovemoovie_bot",
     "QUIZ_HOURS": "48",
     "WEBHOOK_URL": "https://ilovemoovie-quiz-bot.spectran186.workers.dev/telegram/webhook"
