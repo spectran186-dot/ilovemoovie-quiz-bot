@@ -1,0 +1,1 @@
+ALTER TABLE sessions ADD COLUMN waiting_next INTEGER NOT NULL DEFAULT 0;
