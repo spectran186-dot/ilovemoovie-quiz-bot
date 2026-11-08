@@ -21,7 +21,7 @@ type TgUser = { id:number; username?:string; first_name?:string; last_name?:stri
 type TgMessage = { message_id:number; text?:string; caption?:string; photo?:Array<{file_id:string}>; video?:{file_id:string}; audio?:{file_id:string}; voice?:{file_id:string}; from?:TgUser; chat:{id:number;type:string} };
 type TgCallback = { id:string; from:TgUser; data?:string; message?:TgMessage };
 type Update = { update_id:number; message?:TgMessage; callback_query?:TgCallback };
-type Draft = { stage:string; title?:string; mode?:"text"|"choice"; questions:Array<{prompt:string;answer:string;aliases:string[];options:string[];media_type?:string|null;media_file_id?:string|null}>; prompt?:string; answer?:string; options?:string[]; media_type?:string|null; media_file_id?:string|null };
+type Draft = { stage:string; title?:string; mode?:"text"|"choice"; questions:Array<{prompt:string;answer:string;aliases:string[];options:string[];media_type?:string|null;media_file_id?:string|null;annotation?:string}>; prompt?:string; answer?:string; options?:string[]; media_type?:string|null; media_file_id?:string|null };
 const POINTS:Record<number,number>={1:10,2:7,3:4};
 const isoNow=()=>new Date().toISOString();
 const norm=(s:string)=>s.toLocaleLowerCase("ru-RU").replace(/ё/g,"е").normalize("NFKC").replace(/[^\p{L}\p{N}\s]/gu," ").trim().replace(/\s+/g," ");
@@ -72,7 +72,7 @@ async function saveQuiz(env:Env,id:number,d:Draft){
   const quizId=Number(result.meta.last_row_id);
   for(let i=0;i<d.questions.length;i++){
     const q=d.questions[i];
-    const qr=await env.DB.prepare("INSERT INTO questions(quiz_id,position,prompt,answer,options,media_type,media_file_id) VALUES(?,?,?,?,?,?,?)").bind(quizId,i+1,q.prompt,q.answer,JSON.stringify(q.options||[]),q.media_type||null,q.media_file_id||null).run();
+    const qr=await env.DB.prepare("INSERT INTO questions(quiz_id,position,prompt,answer,options,media_type,media_file_id,annotation) VALUES(?,?,?,?,?,?,?,?)").bind(quizId,i+1,q.prompt,q.answer,JSON.stringify(q.options||[]),q.media_type||null,q.media_file_id||null,q.annotation||null).run();
     const qid=Number(qr.meta.last_row_id);
     for(const a of q.aliases) await env.DB.prepare("INSERT INTO aliases(question_id,alias) VALUES(?,?)").bind(qid,a).run();
   }
@@ -142,7 +142,8 @@ async function adminMessage(env:Env,m:TgMessage){
   else if(d.stage==="options"){const a=text.split(/\r?\n/).map(x=>x.trim()).filter(Boolean);if(a.length<2||a.length>6)return say(env,chat,"Отправь 2–6 вариантов, каждый с новой строки.");d.options=a;d.stage="correct";}
   else if(d.stage==="correct"){const n=Number(text);if(!Number.isInteger(n)||n<1||n>(d.options||[]).length)return say(env,chat,"Отправь номер правильного варианта.");d.answer=d.options![n-1];d.stage="aliases";}
   else if(d.stage==="answer"){if(!text)return say(env,chat,"Ответ не должен быть пустым.");d.answer=text;d.options=[];d.stage="aliases";}
-  else if(d.stage==="aliases"){d.questions.push({prompt:d.prompt!,answer:d.answer!,aliases:text==="—"?[]:text.split(";").map(x=>x.trim()).filter(Boolean),options:d.options||[],media_type:d.media_type||null,media_file_id:d.media_file_id||null});d.prompt=undefined;d.answer=undefined;d.options=undefined;d.media_type=null;d.media_file_id=null;d.stage="more";}
+  else if(d.stage==="aliases"){d.questions.push({prompt:d.prompt!,answer:d.answer!,aliases:text==="—"?[]:text.split(";").map(x=>x.trim()).filter(Boolean),options:d.options||[],media_type:d.media_type||null,media_file_id:d.media_file_id||null});d.stage="annotation";}
+  else if(d.stage==="annotation"){d.questions[d.questions.length-1].annotation=text==="—"?"":text;d.prompt=undefined;d.answer=undefined;d.options=undefined;d.media_type=null;d.media_file_id=null;d.stage="more";}
   else if(d.stage==="more"){
     if(text==="+"){d.stage="prompt";}
     else if(["готово","готово!","done"].includes(text.toLowerCase())){
@@ -151,8 +152,8 @@ async function adminMessage(env:Env,m:TgMessage){
     } else return say(env,chat,"Отправь «+» для следующего вопроса или «готово» для сохранения.");
   }
   await putDraft(env,uid,d);
-  const prompts:Record<string,string>={mode:"Выбери режим ответа кнопкой.",prompt:"Отправь текст вопроса или фото/видео/аудио с подписью.",options:"Отправь 2–6 вариантов, каждый с новой строки.",correct:"Отправь номер правильного варианта.",answer:"Укажи правильный ответ.",aliases:"Укажи альтернативные варианты через ; или отправь —",more:`Вопросов добавлено: ${d.questions.length}. Отправь «+» для следующего вопроса или «готово» для сохранения.`};
-  const kb:Record<string,any>={mode:{inline_keyboard:[[{text:"🔘 Варианты ответа",callback_data:"wiz:mode:choice"},{text:"✍️ Свой ответ",callback_data:"wiz:mode:text"}],[{text:"✖️ Отмена",callback_data:"wiz:cancel"}]]},more:{inline_keyboard:[[{text:"➕ Добавить вопрос",callback_data:"wiz:more"},{text:"💾 Сохранить квиз",callback_data:"wiz:save"}],[{text:"✖️ Отмена",callback_data:"wiz:cancel"}]]}};return say(env,chat,d.stage==="title"?"Отправь название викторины.":prompts[d.stage]||"Продолжим.",kb[d.stage]?{reply_markup:kb[d.stage]}:{});
+  const prompts:Record<string,string>={mode:"Выбери режим ответа кнопкой.",prompt:"Отправь текст вопроса или фото/видео/аудио с подписью.",options:"Отправь 2–6 вариантов, каждый с новой строки.",correct:"Отправь номер правильного варианта.",answer:"Укажи правильный ответ.",aliases:"Укажи альтернативные варианты через ; или отправь —",annotation:"Добавь краткую справку к правильному ответу или отправь — чтобы пропустить.",more:`Вопросов добавлено: ${d.questions.length}. Отправь «+» для следующего вопроса или «готово» для сохранения.`};
+  const kb:Record<string,any>={mode:{inline_keyboard:[[{text:"🔘 Варианты ответа",callback_data:"wiz:mode:choice"},{text:"✍️ Свой ответ",callback_data:"wiz:mode:text"}],[{text:"✖️ Отмена",callback_data:"wiz:cancel"}]]},annotation:{inline_keyboard:[[{text:"Пропустить",callback_data:"wiz:annotation:skip"}],[{text:"✖️ Отмена",callback_data:"wiz:cancel"}]]},more:{inline_keyboard:[[{text:"➕ Добавить вопрос",callback_data:"wiz:more"},{text:"💾 Сохранить квиз",callback_data:"wiz:save"}],[{text:"✖️ Отмена",callback_data:"wiz:cancel"}]]}};return say(env,chat,d.stage==="title"?"Отправь название викторины.":prompts[d.stage]||"Продолжим.",kb[d.stage]?{reply_markup:kb[d.stage]}:{});
 }
 async function sendQuestion(env:Env,chat:number,userId:number,quizId:number){
   const s=await env.DB.prepare("SELECT * FROM sessions WHERE user_id=? AND quiz_id=?").bind(userId,quizId).first<any>();
@@ -200,7 +201,7 @@ async function participantMessage(env:Env,m:TgMessage){
   if(text==="/privacy"){ const u=await env.DB.prepare("SELECT private FROM users WHERE id=?").bind(uid).first<{private:number}>(); if(!u)return say(env,chat,"Сначала отправь /start."); const next=u.private?0:1; await env.DB.prepare("UPDATE users SET private=? WHERE id=?").bind(next,uid).run(); return say(env,chat,next?"Твоё имя скрыто в рейтинге.":"Твоё имя снова отображается в рейтинге."); }
   if(text==="/leaderboard"){ const r=await env.DB.prepare("SELECT u.full_name,SUM(s.score) score FROM sessions s JOIN users u ON u.id=s.user_id WHERE s.completed=1 AND u.private=0 GROUP BY u.id ORDER BY score DESC,u.full_name LIMIT 20").all<{full_name:string;score:number}>(); if(!r.results.length)return say(env,chat,"Рейтинг пока пуст. Стань первым участником!"); return say(env,chat,"🏆 <b>Рейтинг кино-викторины</b>\n"+r.results.map((x,i)=>(i+1)+". "+esc(x.full_name)+" — "+x.score+" баллов").join("\n")); }
   if(!text||text.startsWith("/"))return;
-  const s=await env.DB.prepare("SELECT s.*,q.id AS question_id,q.answer FROM sessions s JOIN questions q ON q.quiz_id=s.quiz_id AND q.position=s.question_pos+1 WHERE s.user_id=? AND s.completed=0 ORDER BY s.started_at DESC LIMIT 1").bind(uid).first<any>();
+  const s=await env.DB.prepare("SELECT s.*,q.id AS question_id,q.answer,q.annotation FROM sessions s JOIN questions q ON q.quiz_id=s.quiz_id AND q.position=s.question_pos+1 WHERE s.user_id=? AND s.completed=0 ORDER BY s.started_at DESC LIMIT 1").bind(uid).first<any>();
   if(!s)return;
   try { await tg(env,"deleteMessage",{chat_id:chat,message_id:m.message_id}); } catch {}
   const aliases=await env.DB.prepare("SELECT alias FROM aliases WHERE question_id=?").bind(s.question_id).all<{alias:string}>();
@@ -209,7 +210,8 @@ async function participantMessage(env:Env,m:TgMessage){
   if(correct){
     const score=s.score+POINTS[attempt];
     await env.DB.prepare("UPDATE sessions SET score=?,question_pos=question_pos+1,attempts=0,waiting_next=1 WHERE id=?").bind(score,s.id).run();
-    return say(env,chat,"✨🎞️✨ <b>БЛЕСТЯЩЕ! ПРАВИЛЬНЫЙ ОТВЕТ!</b> ✨🎬✨\n\n🏆 <b>+"+POINTS[attempt]+" баллов</b>\n⭐ Всего: <b>"+score+"</b>\n\n🎉 Так держать!",{reply_markup:{inline_keyboard:[[{text:"➡️ Следующий вопрос",callback_data:"next:"+s.quiz_id}]]}});
+    const note=s.annotation?"\n\n<blockquote>"+esc(s.annotation)+"</blockquote>":"";
+    return say(env,chat,"✨🎞️✨ <b>БЛЕСТЯЩЕ! ПРАВИЛЬНЫЙ ОТВЕТ!</b> ✨🎬✨\n\n🏆 <b>+"+POINTS[attempt]+" баллов</b>\n⭐ Всего: <b>"+score+"</b>\n\n🎉 Так держать!"+note,{reply_markup:{inline_keyboard:[[{text:"➡️ Следующий вопрос",callback_data:"next:"+s.quiz_id}]]}});
   }
   if(attempt>=3){
     await env.DB.prepare("UPDATE sessions SET question_pos=question_pos+1,attempts=0,waiting_next=1 WHERE id=?").bind(s.id).run();
@@ -221,7 +223,7 @@ async function participantMessage(env:Env,m:TgMessage){
 async function handleUpdate(env:Env,u:Update){
   if(u.callback_query){
     const c=u.callback_query, data=c.data||"";
-    if(data.startsWith("wiz:")){if(!admin(env,c.from.id)){await tg(env,"answerCallbackQuery",{callback_query_id:c.id,text:"Нет доступа."});return;}const chat=c.message?.chat.id||c.from.id;const d=await getDraft(env,c.from.id);await tg(env,"answerCallbackQuery",{callback_query_id:c.id});if(data==="wiz:cancel"){await putDraft(env,c.from.id,null);return say(env,chat,"Создание квиза отменено.");}if(!d)return say(env,chat,"Черновик не найден. Начни заново через /admin.");if(data==="wiz:mode:choice"||data==="wiz:mode:text"){d.mode=data.endsWith("choice")?"choice":"text";d.stage="prompt";await putDraft(env,c.from.id,d);return say(env,chat,"Отправь вопрос текстом или фото/видео/аудио с подписью.");}if(data==="wiz:more"){d.stage="prompt";await putDraft(env,c.from.id,d);return say(env,chat,"Отправь следующий вопрос текстом или прикрепи медиа.");}if(data==="wiz:save"){if(!d.questions.length)return say(env,chat,"Добавь хотя бы один вопрос.");const id=await saveQuiz(env,c.from.id,d);return say(env,chat,`Черновик #${id} «${esc(d.title||"")}» сохранён. Опубликовать можно в «Управление квизами».`);}return;}
+    if(data.startsWith("wiz:")){if(!admin(env,c.from.id)){await tg(env,"answerCallbackQuery",{callback_query_id:c.id,text:"Нет доступа."});return;}const chat=c.message?.chat.id||c.from.id;const d=await getDraft(env,c.from.id);await tg(env,"answerCallbackQuery",{callback_query_id:c.id});if(data==="wiz:cancel"){await putDraft(env,c.from.id,null);return say(env,chat,"Создание квиза отменено.");}if(!d)return say(env,chat,"Черновик не найден. Начни заново через /admin.");if(data==="wiz:mode:choice"||data==="wiz:mode:text"){d.mode=data.endsWith("choice")?"choice":"text";d.stage="prompt";await putDraft(env,c.from.id,d);return say(env,chat,"Отправь вопрос текстом или фото/видео/аудио с подписью.");}if(data==="wiz:annotation:skip"){if(!d.questions.length)return;d.questions[d.questions.length-1].annotation="";d.prompt=undefined;d.answer=undefined;d.options=undefined;d.media_type=null;d.media_file_id=null;d.stage="more";await putDraft(env,c.from.id,d);return say(env,chat,`Вопросов добавлено: ${d.questions.length}. Отправь «+» для следующего вопроса или «готово» для сохранения.`,{reply_markup:{inline_keyboard:[[{text:"➕ Добавить вопрос",callback_data:"wiz:more"},{text:"💾 Сохранить квиз",callback_data:"wiz:save"}],[{text:"✖️ Отмена",callback_data:"wiz:cancel"}]]}});}if(data==="wiz:more"){d.stage="prompt";await putDraft(env,c.from.id,d);return say(env,chat,"Отправь следующий вопрос текстом или прикрепи медиа.");}if(data==="wiz:save"){if(!d.questions.length)return say(env,chat,"Добавь хотя бы один вопрос.");const id=await saveQuiz(env,c.from.id,d);return say(env,chat,`Черновик #${id} «${esc(d.title||"")}» сохранён. Опубликовать можно в «Управление квизами».`);}return;}
     if(data.startsWith("adm:")){
       if(!admin(env,c.from.id)){await tg(env,"answerCallbackQuery",{callback_query_id:c.id,text:"Нет доступа."});return;}
       const parts=data.split(":"), action=parts[1], id=Number(parts[2]), chat=c.message?.chat.id||c.from.id;
